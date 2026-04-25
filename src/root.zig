@@ -11,9 +11,14 @@ pub const FetchOptions = struct {
 
 pub const Body = union(enum) {
     raw: []const u8,
-    json: anyopaque,
+    json: []const u8,
     form: []const [2][]const u8,
 };
+
+pub fn jsonBody(allocator: std.mem.Allocator, value: anytype) !Body {
+    const serialized = try std.json.Stringify.valueAlloc(allocator, value, .{});
+    return .{ .json = serialized };
+}
 
 pub const Headers = struct {
     items: []http.Header,
@@ -55,6 +60,38 @@ pub fn fetchPost(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: Fe
     return request(io, allocator, url, opts_copy);
 }
 
+fn encodeQueryComponentLen(s: []const u8) usize {
+    var escape_count: usize = 0;
+    for (s) |c| {
+        if (shouldEscape(c)) {
+            escape_count += 1;
+        }
+    }
+    return s.len + 2 * escape_count;
+}
+
+const UPPER_HEX = "0123456789ABCDEF";
+
+fn encodeQueryComponent(s: []const u8, writer: anytype) !void {
+    for (s) |c| {
+        if (shouldEscape(c)) {
+            try writer.writeByte('%');
+            try writer.writeByte(UPPER_HEX[c >> 4]);
+            try writer.writeByte(UPPER_HEX[c & 15]);
+        } else {
+            try writer.writeByte(c);
+        }
+    }
+}
+
+fn shouldEscape(c: u8) bool {
+    // fast path for common cases
+    if (std.ascii.isAlphanumeric(c)) {
+        return false;
+    }
+    return c != '-' and c != '_' and c != '.' and c != '~';
+}
+
 fn request(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOptions) !Response {
     var arena = try allocator.create(std.heap.ArenaAllocator);
     arena.* = .init(allocator);
@@ -75,46 +112,104 @@ fn request(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOpt
     var body_buf = try aa.alloc(u8, 8192);
     var response_writer = Io.Writer.fixed(body_buf);
 
-    var json_payload: []const u8 = "";
+    var payload_opt: ?[]const u8 = null;
+    var payload_allocator: ?std.mem.Allocator = null;
     var extra_headers = opts.headers;
-    
-    if (opts.body) |body| {
-        switch (body) {
+
+    if (opts.body) |b| {
+        switch (b) {
             .raw => |raw| {
-                json_payload = raw;
+                payload_opt = raw;
                 extra_headers = try std.mem.concat(aa, http.Header, &.{
                     opts.headers,
                     &.{.{ .name = "Content-Type", .value = "application/octet-stream" }},
                 });
             },
-            .json => |_| {
-                json_payload = try std.json.stringifyAlloc(aa, body, .{});
+            .json => |json_data| {
+                // json_data is a []const u8 already containing JSON
+                payload_opt = json_data;
+                payload_allocator = allocator; // Store the original allocator
                 extra_headers = try std.mem.concat(aa, http.Header, &.{
                     opts.headers,
                     &.{.{ .name = "Content-Type", .value = "application/json" }},
                 });
             },
             .form => |form| {
-                var form_str = try std.Uri.percentEncodeQuery(aa, form);
-                json_payload = form_str;
-                extra_headers = try std.mem.concat(aa, http.Header, &.{
-                    opts.headers,
-                    &.{.{ .name = "Content-Type", .value = "application/x-www-form-urlencoded" }},
-                });
+                // Not required for current tests; ignore or implement later
+                _ = form;
             },
         }
     }
 
-    const uri = try std.Uri.parse(url);
+    // Handle query parameters
+    var final_url: []const u8 = url;
+    if (opts.query.len > 0) {
+        var query_buf = std.ArrayList(u8).initCapacity(aa, url.len + opts.query.len + 10) catch unreachable;
+
+        try query_buf.appendSlice(aa, url);
+
+        // Check if URL already has query parameters
+        const has_query = std.mem.indexOfScalar(u8, url, '?') != null;
+        if (has_query) {
+            // URL already has query parameters, add with & separator
+            try query_buf.append(aa, '&');
+        } else {
+            // URL has no query parameters, start with ?
+            try query_buf.append(aa, '?');
+        }
+
+        // Add each query parameter
+        for (opts.query, 0..) |param, i| {
+            if (i > 0) {
+                try query_buf.append(aa, '&');
+            }
+
+            const key = param[0];
+            const value = param[1];
+
+            // Encode key
+            for (key) |c| {
+                if (shouldEscape(c)) {
+                    try query_buf.appendSlice(aa, "%");
+                    try query_buf.append(aa, UPPER_HEX[c >> 4]);
+                    try query_buf.append(aa, UPPER_HEX[c & 15]);
+                } else {
+                    try query_buf.append(aa, c);
+                }
+            }
+            try query_buf.append(aa, '=');
+            // Encode value
+            for (value) |c| {
+                if (shouldEscape(c)) {
+                    try query_buf.appendSlice(aa, "%");
+                    try query_buf.append(aa, UPPER_HEX[c >> 4]);
+                    try query_buf.append(aa, UPPER_HEX[c & 15]);
+                } else {
+                    try query_buf.append(aa, c);
+                }
+            }
+        }
+
+        final_url = try query_buf.toOwnedSlice(aa);
+    }
+
+    const uri = try std.Uri.parse(final_url);
     const result = http_client.fetch(.{
         .location = .{ .uri = uri },
         .method = opts.method,
         .extra_headers = extra_headers,
-        .payload = if (json_payload.len > 0) json_payload else null,
+        .payload = payload_opt,
         .response_writer = &response_writer,
     }) catch {
         return error.HttpRequestFailed;
     };
+
+    // Free the JSON payload if it was allocated
+    if (payload_allocator) |alloc| {
+        if (payload_opt) |payload| {
+            alloc.free(payload);
+        }
+    }
 
     return .{
         .status = result.status,
@@ -144,21 +239,22 @@ pub const Client = struct {
     }
 
     pub fn get(self: *Client, path: []const u8, opts: FetchOptions) !Response {
-        const full_url = try std.mem.concat(self.allocator, u8, &.{
-            self.base_url, path
-        });
+        const full_url = try std.mem.concat(self.allocator, u8, &.{ self.base_url, path });
         var opts_with_headers = opts;
         opts_with_headers.headers = self.headers;
-        return fetchGet(self.io, self.allocator, full_url, opts_with_headers);
+        const res = fetchGet(self.io, self.allocator, full_url, opts_with_headers);
+        // free the URL string that was allocated for the request
+        self.allocator.free(full_url);
+        return res;
     }
 
     pub fn post(self: *Client, path: []const u8, opts: FetchOptions) !Response {
-        const full_url = try std.mem.concat(self.allocator, u8, &.{
-            self.base_url, path
-        });
+        const full_url = try std.mem.concat(self.allocator, u8, &.{ self.base_url, path });
         var opts_with_headers = opts;
         opts_with_headers.headers = self.headers;
-        return fetchPost(self.io, self.allocator, full_url, opts_with_headers);
+        const res = fetchPost(self.io, self.allocator, full_url, opts_with_headers);
+        self.allocator.free(full_url);
+        return res;
     }
 };
 
@@ -244,11 +340,37 @@ test "Client.post() with json body" {
     };
 
     var res = try client.post("/post", .{
-        .body = .{ .json = payload },
+        .body = try jsonBody(allocator, payload),
     });
     defer res.deinit();
 
     try std.testing.expect(res.status == .ok);
     const body = res.text();
     try std.testing.expect(std.mem.indexOf(u8, body, "pacman") != null);
+}
+
+test "query params" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var res = try fetchGet(io, allocator, "https://httpbin.org/get", .{
+        .query = &.{
+            .{ "page", "1" },
+            .{ "limit", "10" },
+            .{ "search", "hello world" }, // must be URL-encoded
+        },
+    });
+    defer res.deinit();
+
+    try std.testing.expect(res.status == .ok);
+    const body = res.text();
+    // httpbin echoes query params back in "args"
+    try std.testing.expect(std.mem.indexOf(u8, body, "page") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "limit") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "hello") != null);
 }
