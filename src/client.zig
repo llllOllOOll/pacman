@@ -5,6 +5,9 @@ const Response = @import("response.zig").Response;
 const FetchOptions = @import("request.zig").FetchOptions;
 const fetchGet = @import("request.zig").get;
 const fetchPost = @import("request.zig").post;
+const fetchPut = @import("request.zig").put;
+const fetchPatch = @import("request.zig").patch;
+const fetchDelete = @import("request.zig").delete;
 
 pub const Client = struct {
     io: Io,
@@ -39,6 +42,33 @@ pub const Client = struct {
         var opts_with_headers = opts;
         opts_with_headers.headers = self.headers;
         const res = fetchPost(self.io, self.allocator, full_url, opts_with_headers);
+        self.allocator.free(full_url);
+        return res;
+    }
+
+    pub fn put(self: *Client, path: []const u8, opts: FetchOptions) !Response {
+        const full_url = try std.mem.concat(self.allocator, u8, &.{ self.base_url, path });
+        var opts_with_headers = opts;
+        opts_with_headers.headers = self.headers;
+        const res = fetchPut(self.io, self.allocator, full_url, opts_with_headers);
+        self.allocator.free(full_url);
+        return res;
+    }
+
+    pub fn patch(self: *Client, path: []const u8, opts: FetchOptions) !Response {
+        const full_url = try std.mem.concat(self.allocator, u8, &.{ self.base_url, path });
+        var opts_with_headers = opts;
+        opts_with_headers.headers = self.headers;
+        const res = fetchPatch(self.io, self.allocator, full_url, opts_with_headers);
+        self.allocator.free(full_url);
+        return res;
+    }
+
+    pub fn delete(self: *Client, path: []const u8, opts: FetchOptions) !Response {
+        const full_url = try std.mem.concat(self.allocator, u8, &.{ self.base_url, path });
+        var opts_with_headers = opts;
+        opts_with_headers.headers = self.headers;
+        const res = fetchDelete(self.io, self.allocator, full_url, opts_with_headers);
         self.allocator.free(full_url);
         return res;
     }

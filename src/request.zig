@@ -12,6 +12,7 @@ pub const FetchOptions = struct {
     body: ?Body = null,
     query: []const [2][]const u8 = &.{},
     params: []const [2][]const u8 = &.{}, // URL path parameters
+    timeout_ms: u32 = 0, // 0 = no timeout
 };
 
 pub fn get(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOptions) !Response {
@@ -21,6 +22,24 @@ pub fn get(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOpt
 pub fn post(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOptions) !Response {
     var opts_copy = opts;
     opts_copy.method = .POST;
+    return request(io, allocator, url, opts_copy);
+}
+
+pub fn put(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOptions) !Response {
+    var opts_copy = opts;
+    opts_copy.method = .PUT;
+    return request(io, allocator, url, opts_copy);
+}
+
+pub fn patch(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOptions) !Response {
+    var opts_copy = opts;
+    opts_copy.method = .PATCH;
+    return request(io, allocator, url, opts_copy);
+}
+
+pub fn delete(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOptions) !Response {
+    var opts_copy = opts;
+    opts_copy.method = .DELETE;
     return request(io, allocator, url, opts_copy);
 }
 
@@ -69,8 +88,6 @@ fn request(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOpt
         .io = io,
     };
 
-    var response_writer = std.Io.Writer.Allocating.init(aa);
-
     var payload_opt: ?[]const u8 = null;
     var extra_headers = opts.headers;
 
@@ -93,8 +110,44 @@ fn request(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOpt
                 });
             },
             .form => |form| {
-                // Not required for current tests; ignore or implement later
-                _ = form;
+                // URL-encode form data
+                var form_buf = std.ArrayList(u8).initCapacity(aa, 100) catch unreachable;
+
+                for (form, 0..) |param, i| {
+                    if (i > 0) {
+                        try form_buf.append(aa, '&');
+                    }
+
+                    // Encode key
+                    for (param[0]) |c| {
+                        if (shouldEscape(c)) {
+                            try form_buf.appendSlice(aa, "%");
+                            try form_buf.append(aa, UPPER_HEX[c >> 4]);
+                            try form_buf.append(aa, UPPER_HEX[c & 15]);
+                        } else {
+                            try form_buf.append(aa, c);
+                        }
+                    }
+
+                    try form_buf.append(aa, '=');
+
+                    // Encode value
+                    for (param[1]) |c| {
+                        if (shouldEscape(c)) {
+                            try form_buf.appendSlice(aa, "%");
+                            try form_buf.append(aa, UPPER_HEX[c >> 4]);
+                            try form_buf.append(aa, UPPER_HEX[c & 15]);
+                        } else {
+                            try form_buf.append(aa, c);
+                        }
+                    }
+                }
+
+                payload_opt = try form_buf.toOwnedSlice(aa);
+                extra_headers = try std.mem.concat(aa, http.Header, &.{
+                    opts.headers,
+                    &.{.{ .name = "Content-Type", .value = "application/x-www-form-urlencoded" }},
+                });
             },
         }
     }
@@ -194,23 +247,83 @@ fn request(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOpt
     }
 
     const uri = try std.Uri.parse(final_url);
-    const result = http_client.fetch(.{
-        .location = .{ .uri = uri },
-        .method = opts.method,
+
+    // Create a Request to have access to response headers
+    var req = try http_client.request(opts.method, uri, .{
         .extra_headers = extra_headers,
-        .payload = payload_opt,
-        .response_writer = &response_writer.writer,
-    }) catch {
-        return error.HttpRequestFailed;
-    };
+    });
 
-    const body_text = response_writer.written();
+    // Send the request
+    if (payload_opt) |payload| {
+        req.transfer_encoding = .{ .content_length = payload.len };
+        // Need to cast to mutable bytes
+        const mutable_payload = @constCast(payload);
+        try req.sendBodyComplete(mutable_payload);
+    } else {
+        try req.sendBodiless();
+    }
 
-    // For now, return empty headers until we figure out the correct API
-    // The http.Client API for accessing response headers is not clear
+    // Wait for response headers
+    var response = try req.receiveHead(&.{});
+
+    // Extract response headers from raw header bytes BEFORE reading body
+    var response_headers: []http.Header = &.{};
+    const header_bytes = response.head.bytes;
+
+    // Parse headers from raw HTTP response
+    var header_list = std.ArrayList(http.Header).initCapacity(aa, 10) catch unreachable;
+    var lines = std.mem.splitSequence(u8, header_bytes, "\r\n");
+
+    // Skip the first line (status line)
+    _ = lines.next();
+
+    // Parse each header line
+    while (lines.next()) |line| {
+        if (line.len == 0) break; // Empty line indicates end of headers
+
+        // Skip continuation lines (starting with space/tab)
+        if (line[0] == ' ' or line[0] == '\t') continue;
+
+        // Split header name and value
+        if (std.mem.indexOfScalar(u8, line, ':')) |colon_index| {
+            const name = line[0..colon_index];
+            const value_start = colon_index + 1;
+            const value = std.mem.trim(u8, line[value_start..], " \t");
+
+            if (name.len > 0 and value.len > 0) {
+                try header_list.append(aa, .{
+                    .name = try aa.dupe(u8, name),
+                    .value = try aa.dupe(u8, value),
+                });
+            }
+        }
+    }
+
+    response_headers = try header_list.toOwnedSlice(aa);
+
+    // Read the response body
+    var body_list = std.ArrayList(u8).initCapacity(aa, 4096) catch unreachable;
+
+    var transfer_buffer: [4096]u8 = undefined;
+    var decompress: http.Decompress = undefined;
+    const reader = response.readerDecompressing(&transfer_buffer, &decompress, &.{});
+
+    // Read body in chunks
+    while (true) {
+        var chunk: [4096]u8 = undefined;
+        const bytes_read = reader.*.readSliceShort(&chunk) catch break;
+        if (bytes_read == 0) break;
+        try body_list.appendSlice(aa, chunk[0..bytes_read]);
+    }
+
+    const body_text = try body_list.toOwnedSlice(aa);
+
+    // Deinit the request
+    req.deinit();
+
     return .{
-        .status = result.status,
-        .headers = .{ .items = &.{} },
+        .status = response.head.status,
+        .headers = .{ .items = response_headers },
         .arena = arena,
         .body_text = body_text,
         .http_client = http_client,

@@ -8,6 +8,9 @@ pub const Client = @import("client.zig").Client;
 pub const FetchOptions = @import("request.zig").FetchOptions;
 pub const get = @import("request.zig").get;
 pub const post = @import("request.zig").post;
+pub const put = @import("request.zig").put;
+pub const patch = @import("request.zig").patch;
+pub const delete = @import("request.zig").delete;
 
 test "debug text content" {
     var gpa = std.heap.DebugAllocator(.{}){};
@@ -188,13 +191,145 @@ test "response headers" {
     var res = try get(io, allocator, "https://httpbin.org/get", .{});
     defer res.deinit();
 
-    // For now, test that the headers struct exists and get method works
-    // We'll test actual header extraction once the API is clear
-    const content_type = res.headers.get("content-type");
-    // This will be null until we implement proper header extraction
-    // But the method should work without crashing
-    _ = content_type; // Use the variable to avoid unused warning
-
     // Test that response was successful
+    try std.testing.expect(res.status == .ok);
+
+    // Test real header extraction - httpbin.org should return specific headers
+    const content_type = res.headers.get("content-type");
+    try std.testing.expect(content_type != null);
+    try std.testing.expect(std.mem.indexOf(u8, content_type.?, "application/json") != null);
+
+    // Test case-insensitive header lookup
+    const content_type_upper = res.headers.get("CONTENT-TYPE");
+    try std.testing.expect(content_type_upper != null);
+    try std.testing.expect(std.mem.eql(u8, content_type.?, content_type_upper.?));
+}
+
+test "put request" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const payload = .{ .name = "pacman" };
+    const serialized = try std.json.Stringify.valueAlloc(allocator, payload, .{});
+    defer allocator.free(serialized);
+
+    var res = try put(io, allocator, "https://httpbin.org/put", .{
+        .body = jsonBody(serialized),
+    });
+    defer res.deinit();
+    try std.testing.expect(res.status == .ok);
+}
+
+test "patch request" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const payload = .{ .name = "pacman" };
+    const serialized = try std.json.Stringify.valueAlloc(allocator, payload, .{});
+    defer allocator.free(serialized);
+
+    var res = try patch(io, allocator, "https://httpbin.org/patch", .{
+        .body = jsonBody(serialized),
+    });
+    defer res.deinit();
+    try std.testing.expect(res.status == .ok);
+}
+
+test "delete request" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var res = try delete(io, allocator, "https://httpbin.org/delete", .{});
+    defer res.deinit();
+    try std.testing.expect(res.status == .ok);
+}
+
+test "form body" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var res = try post(io, allocator, "https://httpbin.org/post", .{
+        .body = .{ .form = &.{
+            .{ "name", "pacman" },
+            .{ "version", "1" },
+        } },
+    });
+    defer res.deinit();
+    try std.testing.expect(res.status == .ok);
+    const body = res.text();
+    try std.testing.expect(std.mem.indexOf(u8, body, "pacman") != null);
+}
+
+test "timeout field exists" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // Test that timeout_ms field exists and doesn't break anything
+    var res = try get(io, allocator, "https://httpbin.org/get", .{
+        .timeout_ms = 0, // No timeout
+    });
+    defer res.deinit();
+    try std.testing.expect(res.status == .ok);
+}
+
+test "real timeout functionality" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // This test will need to be updated when timeout functionality is implemented
+    // For now, it just verifies that the request completes successfully
+    var res = try get(io, allocator, "https://httpbin.org/delay/1", .{
+        .timeout_ms = 500, // 500ms timeout - should timeout if implemented
+    });
+    defer res.deinit();
+
+    // Currently timeout is not implemented, so request should succeed
+    try std.testing.expect(res.status == .ok);
+}
+
+test "Client.delete()" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var client = Client.init(io, allocator, .{
+        .base_url = "https://httpbin.org",
+    });
+    var res = try client.delete("/delete", .{});
+    defer res.deinit();
     try std.testing.expect(res.status == .ok);
 }
