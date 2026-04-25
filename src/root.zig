@@ -15,8 +15,7 @@ pub const Body = union(enum) {
     form: []const [2][]const u8,
 };
 
-pub fn jsonBody(allocator: std.mem.Allocator, value: anytype) !Body {
-    const serialized = try std.json.Stringify.valueAlloc(allocator, value, .{});
+pub fn jsonBody(serialized: []const u8) Body {
     return .{ .json = serialized };
 }
 
@@ -113,7 +112,6 @@ fn request(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOpt
     var response_writer = Io.Writer.fixed(body_buf);
 
     var payload_opt: ?[]const u8 = null;
-    var payload_allocator: ?std.mem.Allocator = null;
     var extra_headers = opts.headers;
 
     if (opts.body) |b| {
@@ -126,9 +124,9 @@ fn request(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOpt
                 });
             },
             .json => |json_data| {
-                // json_data is a []const u8 already containing JSON
-                payload_opt = json_data;
-                payload_allocator = allocator; // Store the original allocator
+                // Copy JSON data into arena for automatic cleanup
+                const owned = try aa.dupe(u8, json_data);
+                payload_opt = owned;
                 extra_headers = try std.mem.concat(aa, http.Header, &.{
                     opts.headers,
                     &.{.{ .name = "Content-Type", .value = "application/json" }},
@@ -203,13 +201,6 @@ fn request(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOpt
     }) catch {
         return error.HttpRequestFailed;
     };
-
-    // Free the JSON payload if it was allocated
-    if (payload_allocator) |alloc| {
-        if (payload_opt) |payload| {
-            alloc.free(payload);
-        }
-    }
 
     return .{
         .status = result.status,
@@ -338,9 +329,11 @@ test "Client.post() with json body" {
         .name = "pacman",
         .version = @as(u32, 1),
     };
+    const serialized = try std.json.Stringify.valueAlloc(allocator, payload, .{});
+    defer allocator.free(serialized);
 
     var res = try client.post("/post", .{
-        .body = try jsonBody(allocator, payload),
+        .body = jsonBody(serialized),
     });
     defer res.deinit();
 
