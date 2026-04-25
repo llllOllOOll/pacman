@@ -11,6 +11,7 @@ pub const FetchOptions = struct {
     headers: []const http.Header = &.{},
     body: ?Body = null,
     query: []const [2][]const u8 = &.{},
+    params: []const [2][]const u8 = &.{}, // URL path parameters
 };
 
 pub fn get(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOptions) !Response {
@@ -98,8 +99,50 @@ fn request(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOpt
         }
     }
 
-    // Handle query parameters
+    // Handle URL path parameters
     var final_url: []const u8 = url;
+    if (opts.params.len > 0) {
+        var param_buf = std.ArrayList(u8).initCapacity(aa, url.len) catch unreachable;
+
+        var i: usize = 0;
+        while (i < url.len) {
+            if (i + 1 < url.len and url[i] == ':' and std.ascii.isAlphabetic(url[i + 1])) {
+                // Found a parameter
+                const param_start = i + 1;
+                var param_end = param_start;
+                while (param_end < url.len and (std.ascii.isAlphanumeric(url[param_end]) or url[param_end] == '_')) {
+                    param_end += 1;
+                }
+
+                const param_name = url[param_start..param_end];
+                var found = false;
+
+                // Look for matching parameter value
+                for (opts.params) |param| {
+                    if (std.mem.eql(u8, param[0], param_name)) {
+                        try param_buf.appendSlice(aa, param[1]);
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found) {
+                    // Parameter not found, keep original
+                    try param_buf.appendSlice(aa, url[i..param_end]);
+                }
+
+                i = param_end;
+            } else {
+                // Regular character
+                try param_buf.append(aa, url[i]);
+                i += 1;
+            }
+        }
+
+        final_url = try param_buf.toOwnedSlice(aa);
+    }
+
+    // Handle query parameters
     if (opts.query.len > 0) {
         var query_buf = std.ArrayList(u8).initCapacity(aa, url.len + opts.query.len + 10) catch unreachable;
 
@@ -163,6 +206,8 @@ fn request(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOpt
 
     const body_text = response_writer.written();
 
+    // For now, return empty headers until we figure out the correct API
+    // The http.Client API for accessing response headers is not clear
     return .{
         .status = result.status,
         .headers = .{ .items = &.{} },

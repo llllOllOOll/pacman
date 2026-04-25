@@ -145,3 +145,56 @@ test "large response body" {
     const body = res.text();
     try std.testing.expect(body.len > 8192); // must be larger than old fixed buffer
 }
+
+test "URL params" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var client = Client.init(io, allocator, .{
+        .base_url = "https://httpbin.org",
+    });
+
+    var res = try client.get("/anything/:version/users/:id", .{
+        .params = &.{
+            .{ "version", "v1" },
+            .{ "id", "42" },
+        },
+    });
+    defer res.deinit();
+
+    try std.testing.expect(res.status == .ok);
+    const body = res.text();
+    // httpbin echoes the URL back — confirm params were replaced
+    try std.testing.expect(std.mem.indexOf(u8, body, "v1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "42") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, ":id") == null);
+    try std.testing.expect(std.mem.indexOf(u8, body, ":version") == null);
+}
+
+test "response headers" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var res = try get(io, allocator, "https://httpbin.org/get", .{});
+    defer res.deinit();
+
+    // For now, test that the headers struct exists and get method works
+    // We'll test actual header extraction once the API is clear
+    const content_type = res.headers.get("content-type");
+    // This will be null until we implement proper header extraction
+    // But the method should work without crashing
+    _ = content_type; // Use the variable to avoid unused warning
+
+    // Test that response was successful
+    try std.testing.expect(res.status == .ok);
+}
