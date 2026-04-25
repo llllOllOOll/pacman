@@ -306,7 +306,8 @@ fn request(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOpt
 
     var transfer_buffer: [4096]u8 = undefined;
     var decompress: http.Decompress = undefined;
-    const reader = response.readerDecompressing(&transfer_buffer, &decompress, &.{});
+    var decompress_buffer: [std.compress.flate.max_window_len]u8 = undefined;
+    const reader = response.readerDecompressing(&transfer_buffer, &decompress, &decompress_buffer);
 
     // Read body in chunks
     while (true) {
