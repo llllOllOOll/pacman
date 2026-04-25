@@ -13,11 +13,11 @@ pub const FetchOptions = struct {
     query: []const [2][]const u8 = &.{},
 };
 
-pub fn fetchGet(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOptions) !Response {
+pub fn get(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOptions) !Response {
     return request(io, allocator, url, opts);
 }
 
-pub fn fetchPost(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOptions) !Response {
+pub fn post(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOptions) !Response {
     var opts_copy = opts;
     opts_copy.method = .POST;
     return request(io, allocator, url, opts_copy);

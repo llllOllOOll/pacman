@@ -6,8 +6,8 @@ pub const Headers = @import("headers.zig").Headers;
 pub const Response = @import("response.zig").Response;
 pub const Client = @import("client.zig").Client;
 pub const FetchOptions = @import("request.zig").FetchOptions;
-pub const fetchGet = @import("request.zig").fetchGet;
-pub const fetchPost = @import("request.zig").fetchPost;
+pub const get = @import("request.zig").get;
+pub const post = @import("request.zig").post;
 
 test "debug text content" {
     var gpa = std.heap.DebugAllocator(.{}){};
@@ -18,7 +18,7 @@ test "debug text content" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var res = try fetchGet(io, allocator, "https://httpbin.org/get", .{});
+    var res = try get(io, allocator, "https://httpbin.org/get", .{});
     defer res.deinit();
 
     std.debug.print("status: {d}\n", .{res.status});
@@ -42,7 +42,7 @@ test "response.json()" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var res = try fetchGet(io, allocator, "https://httpbin.org/get", .{});
+    var res = try get(io, allocator, "https://httpbin.org/get", .{});
     defer res.deinit();
 
     const parsed = try res.json(HttpbinResponse);
@@ -111,7 +111,7 @@ test "query params" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var res = try fetchGet(io, allocator, "https://httpbin.org/get", .{
+    var res = try get(io, allocator, "https://httpbin.org/get", .{
         .query = &.{
             .{ "page", "1" },
             .{ "limit", "10" },
@@ -138,7 +138,7 @@ test "large response body" {
     const io = threaded.io();
 
     // httpbin returns a large response with 16384 bytes
-    var res = try fetchGet(io, allocator, "https://httpbin.org/stream-bytes/16384", .{});
+    var res = try get(io, allocator, "https://httpbin.org/stream-bytes/16384", .{});
     defer res.deinit();
 
     try std.testing.expect(res.status == .ok);

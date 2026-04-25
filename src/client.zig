@@ -3,8 +3,8 @@ const std = @import("std");
 const Io = std.Io;
 const Response = @import("response.zig").Response;
 const FetchOptions = @import("request.zig").FetchOptions;
-const fetchGet = @import("request.zig").fetchGet;
-const fetchPost = @import("request.zig").fetchPost;
+const fetchGet = @import("request.zig").get;
+const fetchPost = @import("request.zig").post;
 
 pub const Client = struct {
     io: Io,
