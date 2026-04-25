@@ -127,3 +127,21 @@ test "query params" {
     try std.testing.expect(std.mem.indexOf(u8, body, "limit") != null);
     try std.testing.expect(std.mem.indexOf(u8, body, "hello") != null);
 }
+
+test "large response body" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // httpbin returns a large response with 16384 bytes
+    var res = try fetchGet(io, allocator, "https://httpbin.org/stream-bytes/16384", .{});
+    defer res.deinit();
+
+    try std.testing.expect(res.status == .ok);
+    const body = res.text();
+    try std.testing.expect(body.len > 8192); // must be larger than old fixed buffer
+}

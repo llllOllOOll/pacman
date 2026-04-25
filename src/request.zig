@@ -68,8 +68,7 @@ fn request(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOpt
         .io = io,
     };
 
-    var body_buf = try aa.alloc(u8, 8192);
-    var response_writer = Io.Writer.fixed(body_buf);
+    var response_writer = std.Io.Writer.Allocating.init(aa);
 
     var payload_opt: ?[]const u8 = null;
     var extra_headers = opts.headers;
@@ -157,16 +156,18 @@ fn request(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOpt
         .method = opts.method,
         .extra_headers = extra_headers,
         .payload = payload_opt,
-        .response_writer = &response_writer,
+        .response_writer = &response_writer.writer,
     }) catch {
         return error.HttpRequestFailed;
     };
+
+    const body_text = response_writer.written();
 
     return .{
         .status = result.status,
         .headers = .{ .items = &.{} },
         .arena = arena,
-        .body_text = body_buf[0..response_writer.end],
+        .body_text = body_text,
         .http_client = http_client,
     };
 }
