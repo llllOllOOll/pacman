@@ -8,7 +8,7 @@ const std = @import("std");
 // know when a step doesn't need to be re-run).
 pub fn build(b: *std.Build) void {
     // Add module for consumers to import
-    _ = b.addModule("fetch", .{
+    _ = b.addModule("pacman", .{
         .root_source_file = b.path("src/root.zig"),
     });
 }
