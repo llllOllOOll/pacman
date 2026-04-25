@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 
 pub const Body = @import("body.zig").Body;
 pub const jsonBody = @import("body.zig").jsonBody;
@@ -332,4 +333,39 @@ test "Client.delete()" {
     var res = try client.delete("/delete", .{});
     defer res.deinit();
     try std.testing.expect(res.status == .ok);
+}
+
+test "concurrent requests with io.async" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // measure time — 2 sequential requests would take ~2x
+    // concurrent should finish in ~1x
+    const start = Io.Clock.real.now(io);
+
+    var t1 = io.async(get, .{ io, allocator, "https://httpbin.org/delay/1", FetchOptions{} });
+    var t2 = io.async(get, .{ io, allocator, "https://httpbin.org/delay/1", FetchOptions{} });
+
+    var r1 = try t1.await(io);
+    var r2 = try t2.await(io);
+
+    const end = Io.Clock.real.now(io);
+    const elapsed_ns = start.durationTo(end).toNanoseconds();
+    const elapsed_ms = @divTrunc(elapsed_ns, 1000000);
+
+    // if truly concurrent, both 1s requests finish in ~1s total, not ~2s
+    std.debug.print("elapsed: {d}ms\n", .{elapsed_ms});
+
+    defer r1.deinit();
+    defer r2.deinit();
+
+    try std.testing.expect(r1.status == .ok);
+    try std.testing.expect(r2.status == .ok);
+    // concurrent: should finish well under 2 seconds (accounting for network variability)
+    try std.testing.expect(elapsed_ms < 1900);
 }
