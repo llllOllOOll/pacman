@@ -1,3 +1,6 @@
 .zig-cache/
 zig-out
 pkg-zig
+concurrency_demo
+zig-cache/
+zig-out/
