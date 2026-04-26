@@ -7,6 +7,11 @@ pub const Headers = @import("headers.zig").Headers;
 pub const Response = @import("response.zig").Response;
 pub const Client = @import("client.zig").Client;
 pub const FetchOptions = @import("request.zig").FetchOptions;
+pub const asyncGet = @import("client.zig").asyncGet;
+pub const asyncPost = @import("client.zig").asyncPost;
+pub const asyncPut = @import("client.zig").asyncPut;
+pub const asyncPatch = @import("client.zig").asyncPatch;
+pub const asyncDelete = @import("client.zig").asyncDelete;
 pub const get = @import("request.zig").get;
 pub const post = @import("request.zig").post;
 pub const put = @import("request.zig").put;
@@ -368,4 +373,139 @@ test "concurrent requests with io.async" {
     try std.testing.expect(r2.status == .ok);
     // concurrent: should finish well under 2 seconds (accounting for network variability)
     try std.testing.expect(elapsed_ms < 1900);
+}
+
+test "asyncGet with Client" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var client = Client.init(io, allocator, .{
+        .base_url = "https://httpbin.org",
+    });
+
+    var res = try client.get("/get", .{});
+    defer res.deinit();
+    try std.testing.expect(res.status == .ok);
+}
+
+test "asyncPost with Client" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var client = Client.init(io, allocator, .{
+        .base_url = "https://httpbin.org",
+    });
+
+    var res = try client.post("/post", .{
+        .body = jsonBody("{\"test\":true}"),
+    });
+    defer res.deinit();
+    try std.testing.expect(res.status == .ok);
+    const body = res.text();
+    try std.testing.expect(std.mem.indexOf(u8, body, "\"test\": true") != null);
+}
+
+test "asyncPut with Client" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var client = Client.init(io, allocator, .{
+        .base_url = "https://httpbin.org",
+    });
+
+    var res = try client.put("/put", .{
+        .body = jsonBody("{\"updated\":true}"),
+    });
+    defer res.deinit();
+    try std.testing.expect(res.status == .ok);
+    const body = res.text();
+    try std.testing.expect(std.mem.indexOf(u8, body, "\"updated\": true") != null);
+}
+
+test "asyncPatch with Client" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var client = Client.init(io, allocator, .{
+        .base_url = "https://httpbin.org",
+    });
+
+    var res = try client.patch("/patch", .{
+        .body = jsonBody("{\"patched\":true}"),
+    });
+    defer res.deinit();
+    try std.testing.expect(res.status == .ok);
+    const body = res.text();
+    try std.testing.expect(std.mem.indexOf(u8, body, "\"patched\": true") != null);
+}
+
+test "asyncDelete with Client" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var client = Client.init(io, allocator, .{
+        .base_url = "https://httpbin.org",
+    });
+
+    var res = try client.delete("/delete", .{});
+    defer res.deinit();
+    try std.testing.expect(res.status == .ok);
+}
+
+test "concurrent async requests with Client methods" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var client = Client.init(io, allocator, .{
+        .base_url = "https://httpbin.org",
+    });
+
+    const start = Io.Clock.real.now(io);
+
+    var t1 = io.async(asyncGet, .{ &client, "/delay/1", .{} });
+    var t2 = io.async(asyncGet, .{ &client, "/delay/1", .{} });
+
+    var r1 = try t1.await(io);
+    var r2 = try t2.await(io);
+
+    const end = Io.Clock.real.now(io);
+    const elapsed_ns = start.durationTo(end).toNanoseconds();
+    const elapsed_ms = @divTrunc(elapsed_ns, 1000000);
+
+    defer r1.deinit();
+    defer r2.deinit();
+
+    try std.testing.expect(r1.status == .ok);
+    try std.testing.expect(r2.status == .ok);
+    try std.testing.expect(elapsed_ms < 2500);
 }

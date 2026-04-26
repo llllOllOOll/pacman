@@ -260,7 +260,16 @@ fn request(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOpt
         const mutable_payload = @constCast(payload);
         try req.sendBodyComplete(mutable_payload);
     } else {
-        try req.sendBodiless();
+        // For methods that require a body (POST, PUT, PATCH), send empty body with Content-Length: 0
+        switch (opts.method) {
+            .POST, .PUT, .PATCH => {
+                req.transfer_encoding = .{ .content_length = 0 };
+                try req.sendBodyComplete(&.{});
+            },
+            else => {
+                try req.sendBodiless();
+            },
+        }
     }
 
     // Wait for response headers

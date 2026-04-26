@@ -33,8 +33,20 @@ zig fetch --save git+https://github.com/llllOllOOll/pacman
 Then in `build.zig`:
 
 ```zig
-const pacman = b.dependency("pacman", .{});
-exe.root_module.addImport("pacman", pacman.module("pacman"));
+const pacman_dep = b.dependency("pacman", .{});
+
+const exe = b.addExecutable(.{
+    .name = "myapp",
+    .root_module = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "myapp", .module = mod },
+            .{ .name = "pacman", .module = pacman_dep.module("pacman") },
+        },
+    }),
+});
 ```
 
 ---
@@ -46,8 +58,8 @@ const std = @import("std");
 const pacman = @import("pacman");
 
 pub fn main(init: std.process.Init) !void {
-    const allocator = init.allocator;
     const io = init.io;
+    const allocator = init.gpa.allocator();
 
     var res = try pacman.get(io, allocator, "https://api.example.com/users", .{});
     defer res.deinit();
@@ -63,103 +75,141 @@ pub fn main(init: std.process.Init) !void {
 ### Standalone requests
 
 ```zig
-// GET
-var res = try pacman.get(io, allocator, "https://api.example.com/users", .{});
-defer res.deinit();
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const allocator = init.gpa.allocator();
 
-// POST with JSON body
-const payload = .{ .name = "seven", .role = "admin" };
-const serialized = try std.json.Stringify.valueAlloc(allocator, payload, .{});
-defer allocator.free(serialized);
+    // GET
+    var res = try pacman.get(io, allocator, "https://api.example.com/users", .{});
+    defer res.deinit();
 
-var res = try pacman.post(io, allocator, "https://api.example.com/users", .{
-    .body = pacman.jsonBody(serialized),
-});
-defer res.deinit();
+    // POST with JSON body
+    const payload = .{ .name = "seven", .role = "admin" };
+    const serialized = try std.json.Stringify.valueAlloc(allocator, payload, .{});
+    defer allocator.free(serialized);
 
-// PUT, PATCH, DELETE follow the same pattern
-var res = try pacman.delete(io, allocator, "https://api.example.com/users/42", .{});
-defer res.deinit();
+    var res = try pacman.post(io, allocator, "https://api.example.com/users", .{
+        .body = pacman.jsonBody(serialized),
+    });
+    defer res.deinit();
+
+    // PUT, PATCH, DELETE follow the same pattern
+    var res = try pacman.delete(io, allocator, "https://api.example.com/users/42", .{});
+    defer res.deinit();
+}
 ```
 
 ### Client with baseURL and global headers
 
 ```zig
-var api = pacman.Client.init(io, allocator, .{
-    .base_url = "https://api.example.com",
-    .headers = &.{
-        .{ .name = "Authorization", .value = "Bearer your-token" },
-        .{ .name = "Accept", .value = "application/json" },
-    },
-});
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const allocator = init.gpa.allocator();
 
-var res = try api.get("/users", .{});
-defer res.deinit();
+    var api = pacman.Client.init(io, allocator, .{
+        .base_url = "https://api.example.com",
+        .headers = &.{
+            .{ .name = "Authorization", .value = "Bearer your-token" },
+            .{ .name = "Accept", .value = "application/json" },
+        },
+    });
 
-var res = try api.post("/users", .{
-    .body = pacman.jsonBody(serialized),
-});
-defer res.deinit();
+    var res = try api.get("/users", .{});
+    defer res.deinit();
+
+    var res = try api.post("/users", .{
+        .body = pacman.jsonBody(serialized),
+    });
+    defer res.deinit();
+}
 ```
 
 ### Query params
 
 ```zig
-var res = try pacman.get(io, allocator, "https://api.example.com/users", .{
-    .query = &.{
-        .{ "page", "1" },
-        .{ "limit", "20" },
-        .{ "search", "hello world" }, // automatically URL-encoded
-    },
-});
-defer res.deinit();
-// → GET /users?page=1&limit=20&search=hello%20world
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const allocator = init.gpa.allocator();
+
+    var res = try pacman.get(io, allocator, "https://api.example.com/users", .{
+        .query = &.{
+            .{ "page", "1" },
+            .{ "limit", "20" },
+            .{ "search", "hello world" }, // automatically URL-encoded
+        },
+    });
+    defer res.deinit();
+    // → GET /users?page=1&limit=20&search=hello%20world
+}
 ```
 
 ### URL path params
 
 ```zig
-var res = try api.get("/users/:id/posts/:post_id", .{
-    .params = &.{
-        .{ "id", "42" },
-        .{ "post_id", "7" },
-    },
-});
-defer res.deinit();
-// → GET /users/42/posts/7
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const allocator = init.gpa.allocator();
+
+    var api = pacman.Client.init(io, allocator, .{
+        .base_url = "https://api.example.com",
+    });
+
+    var res = try api.get("/users/:id/posts/:post_id", .{
+        .params = &.{
+            .{ "id", "42" },
+            .{ "post_id", "7" },
+        },
+    });
+    defer res.deinit();
+    // → GET /users/42/posts/7
+}
 ```
 
 ### Reading the response
 
 ```zig
-var res = try api.get("/users/42", .{});
-defer res.deinit();
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const allocator = init.gpa.allocator();
 
-// status code
-std.debug.print("status: {d}\n", .{res.status});
+    var api = pacman.Client.init(io, allocator, .{
+        .base_url = "https://api.example.com",
+    });
 
-// body as string
-const body = res.text();
+    var res = try api.get("/users/42", .{});
+    defer res.deinit();
 
-// body as JSON
-const User = struct { id: u32, name: []const u8 };
-const parsed = try res.json(User);
-std.debug.print("name: {s}\n", .{parsed.value.name});
+    // status code
+    std.debug.print("status: {d}\n", .{res.status});
 
-// response headers (case-insensitive)
-const ct = res.headers.get("content-type");
+    // body as string
+    const body = res.text();
+
+    // body as JSON
+    const User = struct { id: u32, name: []const u8 };
+    const parsed = try res.json(User);
+    std.debug.print("name: {s}\n", .{parsed.value.name});
+
+    // response headers (case-insensitive)
+    const ct = res.headers.get("content-type");
+}
 ```
 
 ### Form body
 
 ```zig
-var res = try pacman.post(io, allocator, "https://api.example.com/login", .{
-    .body = .{ .form = &.{
-        .{ "username", "seven" },
-        .{ "password", "secret" },
-    }},
-});
-defer res.deinit();
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const allocator = init.gpa.allocator();
+
+    var res = try pacman.post(io, allocator, "https://api.example.com/login", .{
+        .body = .{ .form = &.{
+            .{ "username", "seven" },
+            .{ "password", "secret" },
+        }},
+    });
+    defer res.deinit();
+}
 ```
 
 ---
@@ -168,55 +218,112 @@ defer res.deinit();
 
 pacman is built on `std.Io` — the same interface that powers Zig's async I/O. You write your code once and the caller decides the concurrency model.
 
+**Note:** Always add `defer { _ = task.cancel(io) catch {}; }` immediately after each `io.async` call. If any `await` fails, the remaining tasks are automatically cancelled without leaking memory. The `_ =` is required because `cancel` returns a `Response` that must be explicitly discarded.
+
 ### Two requests in parallel
 
 ```zig
-var t1 = io.async(pacman.get, .{ io, allocator, "https://api.example.com/users", pacman.FetchOptions{} });
-var t2 = io.async(pacman.get, .{ io, allocator, "https://api.example.com/posts", pacman.FetchOptions{} });
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const allocator = init.gpa.allocator();
 
-var r1 = try t1.await(io);
-defer r1.deinit();
+    var t1 = io.async(pacman.get, .{ io, allocator, "https://api.example.com/users", .{} });
+    defer { _ = t1.cancel(io) catch {}; }
 
-var r2 = try t2.await(io);
-defer r2.deinit();
+    var t2 = io.async(pacman.get, .{ io, allocator, "https://api.example.com/posts", .{} });
+    defer { _ = t2.cancel(io) catch {}; }
+
+    var r1 = try t1.await(io);
+    defer r1.deinit();
+
+    var r2 = try t2.await(io);
+    defer r2.deinit();
+}
+```
+
+### Concurrent requests with Client
+
+```zig
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const allocator = init.gpa.allocator();
+
+    var client = pacman.Client.init(io, allocator, .{
+        .base_url = "https://api.example.com",
+    });
+
+    // Fire 3 requests concurrently — cleaner than passing io and allocator every time
+    var t1 = io.async(pacman.asyncGet,  .{ &client, "/users", .{} });
+    defer { _ = t1.cancel(io) catch {}; }
+
+    var t2 = io.async(pacman.asyncPost, .{ &client, "/users", .{} });
+    defer { _ = t2.cancel(io) catch {}; }
+
+    var t3 = io.async(pacman.asyncGet,  .{ &client, "/posts", .{} });
+    defer { _ = t3.cancel(io) catch {}; }
+
+    var r1 = try t1.await(io);
+    defer r1.deinit();
+
+    var r2 = try t2.await(io);
+    defer r2.deinit();
+
+    var r3 = try t3.await(io);
+    defer r3.deinit();
+}
 ```
 
 ### Safe cancellation with defer
 
 ```zig
-var task = io.async(pacman.get, .{ io, allocator, url, pacman.FetchOptions{} });
-defer task.cancel(io) catch {};
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const allocator = init.gpa.allocator();
 
-var res = try task.await(io);
-defer res.deinit();
+    var task = io.async(pacman.get, .{ io, allocator, url, pacman.FetchOptions{} });
+    defer { _ = task.cancel(io) catch {}; }
+
+    var res = try task.await(io);
+    defer res.deinit();
+}
 ```
 
 ### Batch processing with controlled concurrency
 
 ```zig
-// 20 concurrent requests at a time
-var task = try io.concurrent(pacman.get, .{ io, allocator, url, pacman.FetchOptions{} });
-defer task.cancel(io) catch {};
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const allocator = init.gpa.allocator();
 
-var res = try task.await(io);
-defer res.deinit();
+    // 20 concurrent requests at a time
+    var task = try io.concurrent(pacman.get, .{ io, allocator, url, pacman.FetchOptions{} });
+    defer { _ = task.cancel(io) catch {}; }
+
+    var res = try task.await(io);
+    defer res.deinit();
+}
 ```
 
 ### Switching backends — zero code changes
 
 ```zig
-// Threaded (stable, production-ready)
-var threaded: std.Io.Threaded = .init(allocator, .{});
-defer threaded.deinit();
-const io = threaded.io();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa.allocator();
 
-// Evented with io_uring (experimental, Linux only)
-var evented: std.Io.Evented = .init(allocator, .{});
-defer evented.deinit();
-const io = evented.io();
+    // Threaded (stable, production-ready)
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
 
-// pacman.get() call is identical in both cases
-var res = try pacman.get(io, allocator, url, .{});
+    // Evented with io_uring (experimental, Linux only)
+    var evented: std.Io.Evented = .init(allocator, .{});
+    defer evented.deinit();
+    const io = evented.io();
+
+    // pacman.get() call is identical in both cases
+    var res = try pacman.get(io, allocator, url, .{});
+    defer res.deinit();
+}
 ```
 
 ---
@@ -264,6 +371,16 @@ var res = try pacman.get(io, allocator, url, .{});
 | `client.put(path, opts)` | PUT with baseURL prepended |
 | `client.patch(path, opts)` | PATCH with baseURL prepended |
 | `client.delete(path, opts)` | DELETE with baseURL prepended |
+
+### Async functions (for use with `io.async`)
+
+| Function | Description |
+|---|---|
+| `asyncGet(client, path, opts)` | Async GET — pass client, not io/allocator |
+| `asyncPost(client, path, opts)` | Async POST |
+| `asyncPut(client, path, opts)` | Async PUT |
+| `asyncPatch(client, path, opts)` | Async PATCH |
+| `asyncDelete(client, path, opts)` | Async DELETE |
 
 ---
 

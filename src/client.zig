@@ -73,3 +73,23 @@ pub const Client = struct {
         return res;
     }
 };
+
+pub fn asyncGet(client: *Client, path: []const u8, opts: FetchOptions) !Response {
+    return client.get(path, opts);
+}
+
+pub fn asyncPost(client: *Client, path: []const u8, opts: FetchOptions) !Response {
+    return client.post(path, opts);
+}
+
+pub fn asyncPut(client: *Client, path: []const u8, opts: FetchOptions) !Response {
+    return client.put(path, opts);
+}
+
+pub fn asyncPatch(client: *Client, path: []const u8, opts: FetchOptions) !Response {
+    return client.patch(path, opts);
+}
+
+pub fn asyncDelete(client: *Client, path: []const u8, opts: FetchOptions) !Response {
+    return client.delete(path, opts);
+}
