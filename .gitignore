@@ -4,3 +4,4 @@ pkg-zig
 concurrency_demo
 zig-cache/
 zig-out/
+demo/
