@@ -17,6 +17,7 @@ pub const post = @import("request.zig").post;
 pub const put = @import("request.zig").put;
 pub const patch = @import("request.zig").patch;
 pub const delete = @import("request.zig").delete;
+pub const head = @import("request.zig").head;
 
 test "debug text content" {
     var gpa = std.heap.DebugAllocator(.{}){};

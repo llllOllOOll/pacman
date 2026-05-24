@@ -12,6 +12,7 @@ pub const FetchOptions = struct {
     body: ?Body = null,
     query: []const [2][]const u8 = &.{},
     params: []const [2][]const u8 = &.{}, // URL path parameters
+    uri: ?std.Uri = null, // pre-built URI (skips std.Uri.parse)
     timeout_ms: u32 = 0, // 0 = no timeout
 };
 
@@ -40,6 +41,12 @@ pub fn patch(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchO
 pub fn delete(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOptions) !Response {
     var opts_copy = opts;
     opts_copy.method = .DELETE;
+    return request(io, allocator, url, opts_copy);
+}
+
+pub fn head(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOptions) !Response {
+    var opts_copy = opts;
+    opts_copy.method = .HEAD;
     return request(io, allocator, url, opts_copy);
 }
 
@@ -75,6 +82,13 @@ fn shouldEscape(c: u8) bool {
     return c != '-' and c != '_' and c != '.' and c != '~';
 }
 
+fn hasContentType(headers: []const http.Header) bool {
+    for (headers) |h| {
+        if (std.ascii.eqlIgnoreCase(h.name, "content-type")) return true;
+    }
+    return false;
+}
+
 fn request(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOptions) !Response {
     var arena = try allocator.create(std.heap.ArenaAllocator);
     arena.* = .init(allocator);
@@ -95,19 +109,23 @@ fn request(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOpt
         switch (b) {
             .raw => |raw| {
                 payload_opt = raw;
-                extra_headers = try std.mem.concat(aa, http.Header, &.{
-                    opts.headers,
-                    &.{.{ .name = "Content-Type", .value = "application/octet-stream" }},
-                });
+                if (!hasContentType(opts.headers)) {
+                    extra_headers = try std.mem.concat(aa, http.Header, &.{
+                        opts.headers,
+                        &.{.{ .name = "Content-Type", .value = "application/octet-stream" }},
+                    });
+                }
             },
             .json => |json_data| {
                 // Copy JSON data into arena for automatic cleanup
                 const owned = try aa.dupe(u8, json_data);
                 payload_opt = owned;
-                extra_headers = try std.mem.concat(aa, http.Header, &.{
-                    opts.headers,
-                    &.{.{ .name = "Content-Type", .value = "application/json" }},
-                });
+                if (!hasContentType(opts.headers)) {
+                    extra_headers = try std.mem.concat(aa, http.Header, &.{
+                        opts.headers,
+                        &.{.{ .name = "Content-Type", .value = "application/json" }},
+                    });
+                }
             },
             .form => |form| {
                 // URL-encode form data
@@ -144,10 +162,12 @@ fn request(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOpt
                 }
 
                 payload_opt = try form_buf.toOwnedSlice(aa);
-                extra_headers = try std.mem.concat(aa, http.Header, &.{
-                    opts.headers,
-                    &.{.{ .name = "Content-Type", .value = "application/x-www-form-urlencoded" }},
-                });
+                if (!hasContentType(opts.headers)) {
+                    extra_headers = try std.mem.concat(aa, http.Header, &.{
+                        opts.headers,
+                        &.{.{ .name = "Content-Type", .value = "application/x-www-form-urlencoded" }},
+                    });
+                }
             },
         }
     }
@@ -246,7 +266,7 @@ fn request(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOpt
         final_url = try query_buf.toOwnedSlice(aa);
     }
 
-    const uri = try std.Uri.parse(final_url);
+    const uri = if (opts.uri) |u| u else try std.Uri.parse(final_url);
 
     // Create a Request to have access to response headers
     var req = try http_client.request(opts.method, uri, .{
