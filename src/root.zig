@@ -510,3 +510,37 @@ test "concurrent async requests with Client methods" {
     try std.testing.expect(r2.status == .ok);
     try std.testing.expect(elapsed_ms < 2500);
 }
+
+test "GET through an explicit HTTP(S) proxy" {
+    // Only runs if PACMAN_TEST_HTTP_PROXY is set, e.g.:
+    //   PACMAN_TEST_HTTP_PROXY=http://127.0.0.1:8899 zig test src/root.zig
+    // Without the env var, it's skipped (doesn't fail the suite) — no real
+    // proxy is available by default in dev/CI. See README for how to spin up
+    // a local proxy (tinyproxy/mitmproxy) to validate manually.
+    var proxy_url: ?[]const u8 = null;
+    {
+        var i: usize = 0;
+        const key = "PACMAN_TEST_HTTP_PROXY";
+        while (std.c.environ[i]) |entry| : (i += 1) {
+            const line = std.mem.span(entry);
+            if (line.len > key.len and line[key.len] == '=' and std.mem.eql(u8, line[0..key.len], key)) {
+                proxy_url = line[key.len + 1 ..];
+                break;
+            }
+        }
+    }
+    const url = proxy_url orelse return error.SkipZigTest;
+
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var res = try get(io, allocator, "https://httpbin.org/get", .{ .proxy_url = url });
+    defer res.deinit();
+
+    try std.testing.expect(res.status == .ok);
+}

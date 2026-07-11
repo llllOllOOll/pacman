@@ -3,6 +3,7 @@ const std = @import("std");
 const Io = std.Io;
 const http = std.http;
 const Body = @import("body.zig").Body;
+const proxy = @import("proxy.zig");
 const Headers = @import("headers.zig").Headers;
 const Response = @import("response.zig").Response;
 
@@ -14,6 +15,11 @@ pub const FetchOptions = struct {
     params: []const [2][]const u8 = &.{}, // URL path parameters
     uri: ?std.Uri = null, // pre-built URI (skips std.Uri.parse)
     timeout_ms: u32 = 0, // 0 = no timeout
+    /// Explicit HTTP(S) proxy URL (e.g. "http://user:pass@host:8080").
+    /// If omitted, falls back to environment variables (http_proxy/https_proxy/
+    /// all_proxy, honoring no_proxy) — if none of those are set either, no
+    /// proxy is used (identical behavior to before this option existed).
+    proxy_url: ?[]const u8 = null,
 };
 
 pub fn get(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOptions) !Response {
@@ -267,6 +273,13 @@ fn request(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOpt
     }
 
     const uri = if (opts.uri) |u| u else try std.Uri.parse(final_url);
+
+    {
+        var host_buf: [Io.net.HostName.max_len]u8 = undefined;
+        if (uri.getHost(&host_buf)) |host_name| {
+            try proxy.configure(aa, http_client, opts.proxy_url, host_name.bytes);
+        } else |_| {}
+    }
 
     // Create a Request to have access to response headers
     var req = try http_client.request(opts.method, uri, .{
