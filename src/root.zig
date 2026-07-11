@@ -7,6 +7,12 @@ pub const Headers = @import("headers.zig").Headers;
 pub const Response = @import("response.zig").Response;
 pub const Client = @import("client.zig").Client;
 pub const FetchOptions = @import("request.zig").FetchOptions;
+/// Low-level entry point, for callers that need full per-call control (own
+/// method/headers/uri) while still reusing a persistent http.Client's
+/// connection pool — e.g. a caller with its own request-signing scheme
+/// (fresh Authorization/date headers every call) that doesn't fit Client's
+/// fixed-headers-at-init model. See Client.get/post/etc for the common case.
+pub const request = @import("request.zig").request;
 pub const asyncGet = @import("client.zig").asyncGet;
 pub const asyncPost = @import("client.zig").asyncPost;
 pub const asyncPut = @import("client.zig").asyncPut;
