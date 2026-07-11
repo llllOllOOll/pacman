@@ -23,37 +23,37 @@ pub const FetchOptions = struct {
 };
 
 pub fn get(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOptions) !Response {
-    return request(io, allocator, url, opts);
+    return request(io, allocator, url, opts, null);
 }
 
 pub fn post(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOptions) !Response {
     var opts_copy = opts;
     opts_copy.method = .POST;
-    return request(io, allocator, url, opts_copy);
+    return request(io, allocator, url, opts_copy, null);
 }
 
 pub fn put(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOptions) !Response {
     var opts_copy = opts;
     opts_copy.method = .PUT;
-    return request(io, allocator, url, opts_copy);
+    return request(io, allocator, url, opts_copy, null);
 }
 
 pub fn patch(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOptions) !Response {
     var opts_copy = opts;
     opts_copy.method = .PATCH;
-    return request(io, allocator, url, opts_copy);
+    return request(io, allocator, url, opts_copy, null);
 }
 
 pub fn delete(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOptions) !Response {
     var opts_copy = opts;
     opts_copy.method = .DELETE;
-    return request(io, allocator, url, opts_copy);
+    return request(io, allocator, url, opts_copy, null);
 }
 
 pub fn head(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOptions) !Response {
     var opts_copy = opts;
     opts_copy.method = .HEAD;
-    return request(io, allocator, url, opts_copy);
+    return request(io, allocator, url, opts_copy, null);
 }
 
 fn encodeQueryComponentLen(s: []const u8) usize {
@@ -95,17 +95,23 @@ fn hasContentType(headers: []const http.Header) bool {
     return false;
 }
 
-fn request(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOptions) !Response {
+/// `existing_client`, when non-null, is a persistent http.Client owned by a
+/// `pacman.Client` — reused across many requests instead of created fresh
+/// here. This function never destroys it; ownership stays with the caller
+/// (see Response.owns_http_client).
+pub fn request(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOptions, existing_client: ?*http.Client) !Response {
     var arena = try allocator.create(std.heap.ArenaAllocator);
     arena.* = .init(allocator);
     errdefer arena.deinit();
 
     const aa = arena.allocator();
 
-    var http_client = try aa.create(http.Client);
-    http_client.* = .{
-        .allocator = aa,
-        .io = io,
+    var owns_http_client = false;
+    const http_client: *http.Client = existing_client orelse blk: {
+        const c = try aa.create(http.Client);
+        c.* = .{ .allocator = aa, .io = io };
+        owns_http_client = true;
+        break :blk c;
     };
 
     var payload_opt: ?[]const u8 = null;
@@ -290,7 +296,15 @@ fn request(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOpt
                 .tls => 443,
             };
             explicit_connection = try proxy.connectSocks5(io, aa, http_client, opts.proxy_url, host_name.bytes, target_port, target_protocol);
-            if (explicit_connection == null) {
+            // http_client.http_proxy/https_proxy are client-level fields,
+            // not per-request. For an owned (single-request) client it's
+            // safe to set them here. For a persistent, shared Client, they
+            // were already fixed once in Client.init() — reconfiguring per
+            // call would race with other in-flight requests through the
+            // same client (Client.call() enforces this by rejecting a
+            // differing opts.proxy_url with error.ProxyMismatch before we
+            // ever get here).
+            if (explicit_connection == null and owns_http_client) {
                 try proxy.configure(aa, http_client, opts.proxy_url, host_name.bytes);
             }
         } else |_| {}
@@ -386,5 +400,6 @@ fn request(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOpt
         .arena = arena,
         .body_text = body_text,
         .http_client = http_client,
+        .owns_http_client = owns_http_client,
     };
 }

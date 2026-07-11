@@ -113,13 +113,14 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const allocator = init.gpa;
 
-    var api = pacman.Client.init(io, allocator, .{
+    var api = try pacman.Client.init(io, allocator, .{
         .base_url = "https://jsonplaceholder.typicode.com",
         .headers = &.{
             .{ .name = "Authorization", .value = "Bearer your-token" },
             .{ .name = "Accept", .value = "application/json" },
         },
     });
+    defer api.deinit();
 
     // GET users
     var users = try api.get("/users", .{});
@@ -140,6 +141,12 @@ pub fn main(init: std.process.Init) !void {
 }
 ```
 
+> Using `Client` (instead of repeated standalone calls) also reuses TCP/TLS
+> connections across requests to the same host — each `.get()/.post()/etc`
+> call goes through the same persistent connection pool instead of dialing
+> fresh every time. This is the recommended way to make several requests to
+> the same host.
+
 ### Query params
 
 ```zig
@@ -150,13 +157,14 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const allocator = init.gpa;
 
-    var api = pacman.Client.init(io, allocator, .{
+    var api = try pacman.Client.init(io, allocator, .{
         .base_url = "https://jsonplaceholder.typicode.com",
         .headers = &.{
             .{ .name = "Authorization", .value = "Bearer your-token" },
             .{ .name = "Accept", .value = "application/json" },
         },
     });
+    defer api.deinit();
 
     // GET users
     var users = try api.get("/users", .{});
@@ -187,9 +195,10 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const allocator = init.gpa;
 
-    var api = pacman.Client.init(io, allocator, .{
+    var api = try pacman.Client.init(io, allocator, .{
         .base_url = "https://jsonplaceholder.typicode.com",
     });
+    defer api.deinit();
 
     // GET post comments using URL path params
     var res = try api.get("/posts/:id/comments", .{
@@ -215,9 +224,10 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const allocator = init.gpa;
 
-    var api = pacman.Client.init(io, allocator, .{
+    var api = try pacman.Client.init(io, allocator, .{
         .base_url = "https://jsonplaceholder.typicode.com",
     });
+    defer api.deinit();
 
     // GET post comments using URL path params
     var res = try api.get("/posts/:id/comments", .{
@@ -243,9 +253,10 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const allocator = init.gpa;
 
-    var api = pacman.Client.init(io, allocator, .{
+    var api = try pacman.Client.init(io, allocator, .{
         .base_url = "https://jsonplaceholder.typicode.com",
     });
+    defer api.deinit();
 
     var res = try api.get("/users/1", .{});
     defer res.deinit();
@@ -285,9 +296,10 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const allocator = init.gpa;
 
-    var client = pacman.Client.init(io, allocator, .{
+    var client = try pacman.Client.init(io, allocator, .{
         .base_url = "https://spiderme.org",
     });
+    defer client.deinit();
 
     var task = io.async(pacman.asyncGet, .{ &client, "/drivers", .{} });
     defer { _ = task.cancel(io) catch {}; }
@@ -443,14 +455,23 @@ defer res.deinit();
 
 Requests go through a proxy in one of two ways, checked in this order:
 
-1. **Explicit**, via `FetchOptions.proxy_url` (or `Client.init`'s `proxy_url`, inherited
-   by every request made through that client unless overridden per-call):
+1. **Explicit**, via `FetchOptions.proxy_url`:
 
    ```zig
    var res = try pacman.get(io, allocator, "https://httpbin.org/get", .{
        .proxy_url = "http://user:pass@proxy.example.com:8080",
    });
    ```
+
+   With `pacman.Client`, the proxy is fixed once at `Client.init()` time (via
+   its own `proxy_url` option, same env-var fallback as below) — it isn't
+   re-evaluated per call. A per-call `opts.proxy_url` that differs from what
+   the Client was initialized with is a usage error
+   (`error.ProxyMismatch`), not silently ignored: the underlying
+   `http.Client` is a persistent, shared connection pool, and its proxy
+   fields can't be safely reconfigured on every request without racing
+   concurrent in-flight requests through the same client. For per-call
+   proxy control, use the standalone functions instead.
 
    SOCKS5(h) works the same way — just change the scheme:
 
@@ -483,7 +504,8 @@ Requests go through a proxy in one of two ways, checked in this order:
 
 | Method | Description |
 |---|---|
-| `Client.init(io, allocator, opts)` | Create configured client |
+| `Client.init(io, allocator, opts)` | Create configured client (fallible: `try Client.init(...)`) |
+| `client.deinit()` | Close the persistent connection pool |
 | `client.get(path, opts)` | GET with baseURL prepended |
 | `client.post(path, opts)` | POST with baseURL prepended |
 | `client.put(path, opts)` | PUT with baseURL prepended |

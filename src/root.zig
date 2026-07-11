@@ -68,10 +68,11 @@ test "Client.get()" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var client = Client.init(io, allocator, .{
+    var client = try Client.init(io, allocator, .{
         .base_url = "https://httpbin.org",
         .headers = &.{.{ .name = "X-Custom", .value = "pacman" }},
     });
+    defer client.deinit();
 
     var res = try client.get("/get", .{});
     defer res.deinit();
@@ -91,9 +92,10 @@ test "Client.post() with json body" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var client = Client.init(io, allocator, .{
+    var client = try Client.init(io, allocator, .{
         .base_url = "https://httpbin.org",
     });
+    defer client.deinit();
 
     const payload = .{
         .name = "pacman",
@@ -165,9 +167,10 @@ test "URL params" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var client = Client.init(io, allocator, .{
+    var client = try Client.init(io, allocator, .{
         .base_url = "https://httpbin.org",
     });
+    defer client.deinit();
 
     var res = try client.get("/anything/:version/users/:id", .{
         .params = &.{
@@ -333,9 +336,10 @@ test "Client.delete()" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var client = Client.init(io, allocator, .{
+    var client = try Client.init(io, allocator, .{
         .base_url = "https://httpbin.org",
     });
+    defer client.deinit();
     var res = try client.delete("/delete", .{});
     defer res.deinit();
     try std.testing.expect(res.status == .ok);
@@ -385,9 +389,10 @@ test "asyncGet with Client" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var client = Client.init(io, allocator, .{
+    var client = try Client.init(io, allocator, .{
         .base_url = "https://httpbin.org",
     });
+    defer client.deinit();
 
     var res = try client.get("/get", .{});
     defer res.deinit();
@@ -403,9 +408,10 @@ test "asyncPost with Client" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var client = Client.init(io, allocator, .{
+    var client = try Client.init(io, allocator, .{
         .base_url = "https://httpbin.org",
     });
+    defer client.deinit();
 
     var res = try client.post("/post", .{
         .body = jsonBody("{\"test\":true}"),
@@ -425,9 +431,10 @@ test "asyncPut with Client" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var client = Client.init(io, allocator, .{
+    var client = try Client.init(io, allocator, .{
         .base_url = "https://httpbin.org",
     });
+    defer client.deinit();
 
     var res = try client.put("/put", .{
         .body = jsonBody("{\"updated\":true}"),
@@ -447,9 +454,10 @@ test "asyncPatch with Client" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var client = Client.init(io, allocator, .{
+    var client = try Client.init(io, allocator, .{
         .base_url = "https://httpbin.org",
     });
+    defer client.deinit();
 
     var res = try client.patch("/patch", .{
         .body = jsonBody("{\"patched\":true}"),
@@ -469,9 +477,10 @@ test "asyncDelete with Client" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var client = Client.init(io, allocator, .{
+    var client = try Client.init(io, allocator, .{
         .base_url = "https://httpbin.org",
     });
+    defer client.deinit();
 
     var res = try client.delete("/delete", .{});
     defer res.deinit();
@@ -487,9 +496,10 @@ test "concurrent async requests with Client methods" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var client = Client.init(io, allocator, .{
+    var client = try Client.init(io, allocator, .{
         .base_url = "https://httpbin.org",
     });
+    defer client.deinit();
 
     const start = Io.Clock.real.now(io);
 

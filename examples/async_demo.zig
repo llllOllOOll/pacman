@@ -4,9 +4,10 @@ const pacman = @import("pacman");
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
 
-    var api = pacman.Client.init(init.io, init.gpa, .{
+    var api = try pacman.Client.init(init.io, init.gpa, .{
         .base_url = "https://jsonplaceholder.typicode.com",
     });
+    defer api.deinit();
 
     var task1 = io.async(pacman.asyncGet, .{ &api, "/posts/1", .{} });
     defer task1.cancel(io) catch {};

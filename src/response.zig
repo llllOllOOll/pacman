@@ -9,10 +9,19 @@ pub const Response = struct {
     arena: *std.heap.ArenaAllocator,
     body_text: []const u8,
     http_client: *http.Client,
+    /// True when `http_client` was created just for this one request (the
+    /// standalone get/post/etc path) — this Response then owns its lifetime.
+    /// False when `http_client` belongs to a persistent `pacman.Client`
+    /// (reused across many requests): in that case `Client.deinit()` closes
+    /// it, not this Response — destroying it here would leave every
+    /// subsequent request through that Client using a freed http.Client.
+    owns_http_client: bool,
 
     pub fn deinit(self: *Response) void {
-        self.http_client.deinit();
-        self.arena.allocator().destroy(self.http_client);
+        if (self.owns_http_client) {
+            self.http_client.deinit();
+            self.arena.allocator().destroy(self.http_client);
+        }
         self.arena.deinit();
         self.arena.child_allocator.destroy(self.arena);
     }
