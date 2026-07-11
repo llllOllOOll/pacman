@@ -511,25 +511,50 @@ test "concurrent async requests with Client methods" {
     try std.testing.expect(elapsed_ms < 2500);
 }
 
+/// Reads a test-only env var via std.c.environ. Used to opt in to the
+/// proxy integration tests below, which need a real local proxy to run
+/// against (see README for how to spin one up).
+fn testEnv(key: []const u8) ?[]const u8 {
+    var i: usize = 0;
+    while (std.c.environ[i]) |entry| : (i += 1) {
+        const line = std.mem.span(entry);
+        if (line.len > key.len and line[key.len] == '=' and std.mem.eql(u8, line[0..key.len], key)) {
+            return line[key.len + 1 ..];
+        }
+    }
+    return null;
+}
+
 test "GET through an explicit HTTP(S) proxy" {
     // Only runs if PACMAN_TEST_HTTP_PROXY is set, e.g.:
     //   PACMAN_TEST_HTTP_PROXY=http://127.0.0.1:8899 zig test src/root.zig
     // Without the env var, it's skipped (doesn't fail the suite) — no real
     // proxy is available by default in dev/CI. See README for how to spin up
     // a local proxy (tinyproxy/mitmproxy) to validate manually.
-    var proxy_url: ?[]const u8 = null;
-    {
-        var i: usize = 0;
-        const key = "PACMAN_TEST_HTTP_PROXY";
-        while (std.c.environ[i]) |entry| : (i += 1) {
-            const line = std.mem.span(entry);
-            if (line.len > key.len and line[key.len] == '=' and std.mem.eql(u8, line[0..key.len], key)) {
-                proxy_url = line[key.len + 1 ..];
-                break;
-            }
-        }
-    }
-    const url = proxy_url orelse return error.SkipZigTest;
+    const url = testEnv("PACMAN_TEST_HTTP_PROXY") orelse return error.SkipZigTest;
+
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var res = try get(io, allocator, "https://httpbin.org/get", .{ .proxy_url = url });
+    defer res.deinit();
+
+    try std.testing.expect(res.status == .ok);
+}
+
+test "GET HTTPS through an explicit SOCKS5(h) proxy" {
+    // Only runs if PACMAN_TEST_SOCKS5_PROXY is set, e.g.:
+    //   PACMAN_TEST_SOCKS5_PROXY=socks5h://127.0.0.1:1080 zig test src/root.zig
+    // This specifically exercises the HTTPS-through-SOCKS5 path, which only
+    // works because of the vendored Client.zig fix — SOCKS5 tunnels to a
+    // .plain byte pipe, and adoptTunneledStream() is what performs the real
+    // TLS handshake on top for the .tls target.
+    const url = testEnv("PACMAN_TEST_SOCKS5_PROXY") orelse return error.SkipZigTest;
 
     var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();

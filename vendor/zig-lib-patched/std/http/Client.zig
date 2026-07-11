@@ -1608,6 +1608,61 @@ pub fn connectProxied(
     };
 }
 
+/// Adopts an already-connected, already-tunneled stream (e.g. one that just
+/// finished a SOCKS5 CONNECT handshake) as a pooled Connection, performing a
+/// TLS handshake on top when `protocol == .tls`. The caller is responsible
+/// for having already fully established the tunnel: by the time this is
+/// called, `stream` must be a raw, unencrypted byte pipe directly to
+/// `remote_host:port`, ready for either plain use or a TLS handshake.
+///
+/// Unlike `connectProxied`, this does not speak any particular tunneling
+/// protocol itself — it only wires an externally-tunneled stream into the
+/// same Connection/pool machinery that every other connect path uses.
+///
+/// This function does not check the connection pool for an existing
+/// connection to reuse; callers that want pooling should call
+/// `connection_pool.findConnection` themselves before dialing and tunneling,
+/// to avoid paying for a tunnel handshake that ends up discarded.
+pub fn adoptTunneledStream(
+    client: *Client,
+    stream: Io.net.Stream,
+    remote_host: HostName,
+    port: u16,
+    protocol: Protocol,
+) !*Connection {
+    const io = client.io;
+
+    const connection = switch (protocol) {
+        .tls => tls: {
+            if (disable_tls) return error.TlsInitializationFailed;
+            // Unlike request(), this path never goes through request()'s own
+            // TLS-bundle preparation — adoptTunneledStream can be (and, for
+            // SOCKS5, always is) called before the client's first
+            // http_client.request() call, so client.now may still be null at
+            // this point. Without this, Connection.Tls.create panics
+            // dereferencing client.now.?.
+            ensureCertBundleLoaded(client, io) catch |err| switch (err) {
+                error.Canceled => |e| return e,
+                else => return error.TlsInitializationFailed,
+            };
+            const tc = Connection.Tls.create(client, remote_host, port, stream) catch |err| switch (err) {
+                error.OutOfMemory => |e| return e,
+                error.Unexpected => |e| return e,
+                error.Canceled => |e| return e,
+                else => return error.TlsInitializationFailed,
+            };
+            break :tls &tc.connection;
+        },
+        .plain => plain: {
+            const pc = try Connection.Plain.create(client, remote_host, port, stream);
+            break :plain &pc.connection;
+        },
+    };
+    connection.proxied = true;
+    try client.connection_pool.addUsed(io, connection);
+    return connection;
+}
+
 pub const ConnectError = ConnectTcpError || RequestError;
 
 /// Connect to `host:port` using the specified protocol. This will reuse a
@@ -1694,6 +1749,33 @@ fn uriPort(uri: Uri, protocol: Protocol) u16 {
     return uri.port orelse protocol.port();
 }
 
+/// Lazily loads (once per client) the CA certificate bundle and sets
+/// `client.now`, which `Connection.Tls.create` requires to be non-null.
+/// Extracted out of `request()` so that other TLS-connection-establishing
+/// paths (e.g. `adoptTunneledStream`, used for tunneling through non-HTTP
+/// proxies like SOCKS5) can ensure the same precondition before calling
+/// `Connection.Tls.create` directly, without going through `request()` at
+/// all.
+fn ensureCertBundleLoaded(client: *Client, io: Io) !void {
+    if (disable_tls) unreachable;
+    {
+        try client.ca_bundle_lock.lockShared(io);
+        defer client.ca_bundle_lock.unlockShared(io);
+        if (client.now != null) return;
+    }
+    var bundle: std.crypto.Certificate.Bundle = .empty;
+    defer bundle.deinit(client.allocator);
+    const now = Io.Clock.real.now(io);
+    bundle.rescan(client.allocator, io, now) catch |err| switch (err) {
+        error.Canceled => |e| return e,
+        else => return error.CertificateBundleLoadFailure,
+    };
+    try client.ca_bundle_lock.lock(io);
+    defer client.ca_bundle_lock.unlock(io);
+    client.now = now;
+    std.mem.swap(std.crypto.Certificate.Bundle, &client.ca_bundle, &bundle);
+}
+
 /// Open a connection to the host specified by `uri` and prepare to send a HTTP request.
 ///
 /// The caller is responsible for calling `deinit()` on the `Request`.
@@ -1724,25 +1806,7 @@ pub fn request(
 
     const protocol = Protocol.fromUri(uri) orelse return error.UnsupportedUriScheme;
 
-    if (protocol == .tls) tls: {
-        if (disable_tls) unreachable;
-        {
-            try client.ca_bundle_lock.lockShared(io);
-            defer client.ca_bundle_lock.unlockShared(io);
-            if (client.now != null) break :tls;
-        }
-        var bundle: std.crypto.Certificate.Bundle = .empty;
-        defer bundle.deinit(client.allocator);
-        const now = Io.Clock.real.now(io);
-        bundle.rescan(client.allocator, io, now) catch |err| switch (err) {
-            error.Canceled => |e| return e,
-            else => return error.CertificateBundleLoadFailure,
-        };
-        try client.ca_bundle_lock.lock(io);
-        defer client.ca_bundle_lock.unlock(io);
-        client.now = now;
-        std.mem.swap(std.crypto.Certificate.Bundle, &client.ca_bundle, &bundle);
-    }
+    if (protocol == .tls) try ensureCertBundleLoaded(client, io);
 
     const connection = options.connection orelse c: {
         var host_name_buffer: [HostName.max_len]u8 = undefined;

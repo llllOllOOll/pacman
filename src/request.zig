@@ -274,16 +274,32 @@ fn request(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOpt
 
     const uri = if (opts.uri) |u| u else try std.Uri.parse(final_url);
 
+    // If a SOCKS5(h) proxy applies, we pre-establish the tunnel ourselves and
+    // hand the resulting Connection to http_client.request() below — SOCKS5
+    // isn't HTTP, so http.Client can't dial it on its own the way it does
+    // for HTTP(S) proxies via .http_proxy/.https_proxy. Otherwise (HTTP(S)
+    // proxy or none), fall back to the existing configure() path, which lets
+    // http_client.request() dial (and proxy) the connection itself.
+    var explicit_connection: ?*http.Client.Connection = null;
     {
         var host_buf: [Io.net.HostName.max_len]u8 = undefined;
         if (uri.getHost(&host_buf)) |host_name| {
-            try proxy.configure(aa, http_client, opts.proxy_url, host_name.bytes);
+            const target_protocol = http.Client.Protocol.fromUri(uri) orelse .plain;
+            const target_port: u16 = uri.port orelse switch (target_protocol) {
+                .plain => 80,
+                .tls => 443,
+            };
+            explicit_connection = try proxy.connectSocks5(io, aa, http_client, opts.proxy_url, host_name.bytes, target_port, target_protocol);
+            if (explicit_connection == null) {
+                try proxy.configure(aa, http_client, opts.proxy_url, host_name.bytes);
+            }
         } else |_| {}
     }
 
     // Create a Request to have access to response headers
     var req = try http_client.request(opts.method, uri, .{
         .extra_headers = extra_headers,
+        .connection = explicit_connection,
     });
 
     // Send the request

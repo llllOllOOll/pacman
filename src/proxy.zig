@@ -1,5 +1,86 @@
 const std = @import("std");
 const http = std.http;
+const socks5 = @import("socks5.zig");
+
+/// Establishes a SOCKS5(h) tunnel to `target_host:target_port` if a SOCKS5
+/// proxy applies — either `explicit_url` with a socks5/socks5h scheme, or
+/// (when `explicit_url` is null or empty) the standard `all_proxy`/
+/// `ALL_PROXY` environment variables, honoring no_proxy/NO_PROXY the same
+/// way `configure()` does. Returns null if no SOCKS5 proxy applies, in which
+/// case the caller should fall back to the regular HTTP(S)-proxy-or-direct
+/// path (`configure()` + a normal `client.request()`).
+///
+/// "5h" means the hostname is never resolved locally — it's sent raw to the
+/// proxy, which resolves it itself (see socks5.zig).
+///
+/// On success, the returned Connection is already registered in
+/// `client.connection_pool` and ready to pass as `.connection` in
+/// `client.request()`.
+pub fn connectSocks5(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    client: *http.Client,
+    explicit_url: ?[]const u8,
+    target_host: []const u8,
+    target_port: u16,
+    target_protocol: http.Client.Protocol,
+) !?*http.Client.Connection {
+    const url = pick: {
+        if (explicit_url) |u| {
+            if (u.len == 0) break :pick null;
+            if (!isSocks5Scheme(u)) return null; // explicit non-SOCKS5 proxy — not our job
+            break :pick u;
+        }
+
+        if (getEnv("no_proxy") orelse getEnv("NO_PROXY")) |list| {
+            if (isBypassed(list, target_host)) break :pick null;
+        }
+        const value = getEnv("all_proxy") orelse getEnv("ALL_PROXY") orelse break :pick null;
+        if (value.len == 0 or !isSocks5Scheme(value)) break :pick null;
+        break :pick value;
+    } orelse return null;
+
+    const uri = std.Uri.parse(url) catch try std.Uri.parseAfterScheme("socks5", url);
+    const proxy_host = try uri.getHostAlloc(allocator);
+    const proxy_port: u16 = uri.port orelse 1080;
+
+    var auth: ?socks5.Auth = null;
+    if (uri.user != null or uri.password != null) {
+        // 256 bytes matches RFC 1929's max username/password length (255 +
+        // room for the length-prefix accounting below) — these values only
+        // ever feed into the SOCKS5 auth sub-negotiation, which rejects
+        // anything longer anyway (see socks5.encodeAuthRequest).
+        var user_buf: [256]u8 = undefined;
+        var pass_buf: [256]u8 = undefined;
+        const user_component: std.Uri.Component = uri.user orelse .empty;
+        const pass_component: std.Uri.Component = uri.password orelse .empty;
+        const user = try user_component.toRaw(&user_buf);
+        const pass = try pass_component.toRaw(&pass_buf);
+        auth = .{
+            .username = try allocator.dupe(u8, user),
+            .password = try allocator.dupe(u8, pass),
+        };
+    }
+
+    const target_host_name: std.Io.net.HostName = .{ .bytes = target_host };
+
+    if (try client.connection_pool.findConnection(io, .{
+        .host = target_host_name,
+        .port = target_port,
+        .protocol = target_protocol,
+    })) |conn| return conn;
+
+    var stream = try proxy_host.connect(io, proxy_port, .{ .mode = .stream });
+    errdefer stream.close(io);
+
+    try socks5.connect(io, stream, target_host, target_port, auth);
+
+    return try client.adoptTunneledStream(stream, target_host_name, target_port, target_protocol);
+}
+
+fn isSocks5Scheme(url: []const u8) bool {
+    return std.mem.startsWith(u8, url, "socks5://") or std.mem.startsWith(u8, url, "socks5h://");
+}
 
 /// Configures the http.Client's proxy, opt-in: if `explicit_url` is given, it
 /// takes priority (and ignores no_proxy, same as curl's --proxy). Otherwise

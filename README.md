@@ -437,6 +437,37 @@ defer res.deinit();
 | `query` | `[]const [2][]const u8` | `&.{}` | Query params |
 | `params` | `[]const [2][]const u8` | `&.{}` | URL path params |
 | `timeout_ms` | `u32` | `0` | Timeout in ms (0 = none) |
+| `proxy_url` | `?[]const u8` | `null` | Explicit proxy URL (`http://`, `https://`, `socks5://`, `socks5h://`) — overrides env vars for this request |
+
+### Using a proxy
+
+Requests go through a proxy in one of two ways, checked in this order:
+
+1. **Explicit**, via `FetchOptions.proxy_url` (or `Client.init`'s `proxy_url`, inherited
+   by every request made through that client unless overridden per-call):
+
+   ```zig
+   var res = try pacman.get(io, allocator, "https://httpbin.org/get", .{
+       .proxy_url = "http://user:pass@proxy.example.com:8080",
+   });
+   ```
+
+   SOCKS5(h) works the same way — just change the scheme:
+
+   ```zig
+   var res = try pacman.get(io, allocator, "https://httpbin.org/get", .{
+       .proxy_url = "socks5h://127.0.0.1:1080",
+   });
+   ```
+
+   `socks5h://` resolves the target hostname on the proxy side (never locally) — this is
+   almost always what you want. Plain `socks5://` is also accepted for compatibility,
+   with the same behavior.
+
+2. **Environment variables**, if `proxy_url` is omitted: `http_proxy`/`HTTP_PROXY` and
+   `https_proxy`/`HTTPS_PROXY` for HTTP(S) proxies, `all_proxy`/`ALL_PROXY` for either
+   HTTP(S) or SOCKS5(h) (scheme-dependent), and `no_proxy`/`NO_PROXY` to exclude specific
+   hosts. With nothing set, no proxy is used — this is fully opt-in.
 
 ### Response
 
@@ -477,6 +508,54 @@ defer res.deinit();
 ## Relation to Spider
 
 pacman was created by the [Spider](https://www.spiderme.org/) team to provide a native HTTP client with full support for Zig 0.17's async I/O model (`std.Io`). It is maintained as a standalone library so the wider Zig community can use it independently.
+
+---
+
+## Vendored Zig Stdlib Patch
+
+`vendor/zig-lib-patched/` is a local copy of the Zig standard library (specifically
+`lib/std/http/Client.zig`) with two patches applied. It exists because pacman needs
+behavior the official stdlib doesn't have — or hasn't fixed — yet, in the exact Zig
+version this project targets. It's wired in only for `zig build test` (via `zig_lib_dir`
+in `build.zig`); it does not affect how projects consuming `pacman` as a dependency
+build.
+
+### Change 1 — HTTPS-through-HTTP-proxy bugfix
+
+`connectProxied()` establishes a `CONNECT` tunnel through an HTTP proxy but never
+performs a TLS handshake over it, even when the real target is HTTPS — the connection
+stays tagged `.plain`, so the request goes out in cleartext and the destination server
+rejects it. This is a known upstream bug, open since 2024 and still unfixed in the Zig
+version this project uses: [ziglang/zig#19878](https://github.com/ziglang/zig/issues/19878).
+
+This is a straight bugfix, not new functionality. When an official Zig release ships
+the fix, this specific change can be removed from the vendor copy.
+
+### Change 2 — `adoptTunneledStream()`
+
+A new function, not a bugfix: it adopts a stream that's already been tunneled by
+external code (used by this project's SOCKS5(h) support) and wires it into
+`http.Client`'s connection/TLS machinery. There's no upstream issue for this because
+there's no upstream behavior to fix — `std.http.Client` simply has no concept of
+non-HTTP tunneling protocols.
+
+Because it's an addition rather than a correction, this change will likely still be
+needed even after Change 1 is fixed officially, unless it's separately proposed and
+accepted upstream as public API.
+
+### Disclosure
+
+This patch was developed with AI assistance and reviewed personally before
+being applied — including isolated validation via `--zig-lib-dir` against a scratch
+copy of the stdlib, automated tests, and a line-by-line review of the SOCKS5 protocol
+parsing code before any real network execution.
+
+### Intent
+
+The long-term goal is to upstream Change 1 as a PR to `ziglang/zig` (referencing
+issue #19878) and drop it from this vendor copy once/if it's accepted. Until then,
+vendoring solves the practical problem now, without depending on the Zig project's
+timeline for reviewing external contributions.
 
 ---
 
