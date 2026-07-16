@@ -34,7 +34,7 @@ test "debug text content" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var res = try get(io, allocator, "https://httpbin.org/get", .{});
+    var res = try get(io, allocator, "https://httpbingo.org/get", .{});
     defer res.deinit();
 
     std.debug.print("status: {d}\n", .{res.status});
@@ -58,11 +58,11 @@ test "response.json()" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var res = try get(io, allocator, "https://httpbin.org/get", .{});
+    var res = try get(io, allocator, "https://httpbingo.org/get", .{});
     defer res.deinit();
 
     const parsed = try res.json(HttpbinResponse);
-    try std.testing.expectEqualStrings("https://httpbin.org/get", parsed.value.url);
+    try std.testing.expectEqualStrings("https://httpbingo.org/get", parsed.value.url);
 }
 
 test "Client.get()" {
@@ -75,7 +75,7 @@ test "Client.get()" {
     const io = threaded.io();
 
     var client = try Client.init(io, allocator, .{
-        .base_url = "https://httpbin.org",
+        .base_url = "https://httpbingo.org",
         .headers = &.{.{ .name = "X-Custom", .value = "pacman" }},
     });
     defer client.deinit();
@@ -99,7 +99,7 @@ test "Client.post() with json body" {
     const io = threaded.io();
 
     var client = try Client.init(io, allocator, .{
-        .base_url = "https://httpbin.org",
+        .base_url = "https://httpbingo.org",
     });
     defer client.deinit();
 
@@ -129,7 +129,7 @@ test "query params" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var res = try get(io, allocator, "https://httpbin.org/get", .{
+    var res = try get(io, allocator, "https://httpbingo.org/get", .{
         .query = &.{
             .{ "page", "1" },
             .{ "limit", "10" },
@@ -156,7 +156,7 @@ test "large response body" {
     const io = threaded.io();
 
     // httpbin returns a large response with 16384 bytes
-    var res = try get(io, allocator, "https://httpbin.org/stream-bytes/16384", .{});
+    var res = try get(io, allocator, "https://httpbingo.org/stream-bytes/16384", .{});
     defer res.deinit();
 
     try std.testing.expect(res.status == .ok);
@@ -174,7 +174,7 @@ test "URL params" {
     const io = threaded.io();
 
     var client = try Client.init(io, allocator, .{
-        .base_url = "https://httpbin.org",
+        .base_url = "https://httpbingo.org",
     });
     defer client.deinit();
 
@@ -204,13 +204,13 @@ test "response headers" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var res = try get(io, allocator, "https://httpbin.org/get", .{});
+    var res = try get(io, allocator, "https://httpbingo.org/get", .{});
     defer res.deinit();
 
     // Test that response was successful
     try std.testing.expect(res.status == .ok);
 
-    // Test real header extraction - httpbin.org should return specific headers
+    // Test real header extraction - httpbingo.org should return specific headers
     const content_type = res.headers.get("content-type");
     try std.testing.expect(content_type != null);
     try std.testing.expect(std.mem.indexOf(u8, content_type.?, "application/json") != null);
@@ -234,7 +234,7 @@ test "put request" {
     const serialized = try std.json.Stringify.valueAlloc(allocator, payload, .{});
     defer allocator.free(serialized);
 
-    var res = try put(io, allocator, "https://httpbin.org/put", .{
+    var res = try put(io, allocator, "https://httpbingo.org/put", .{
         .body = jsonBody(serialized),
     });
     defer res.deinit();
@@ -254,7 +254,7 @@ test "patch request" {
     const serialized = try std.json.Stringify.valueAlloc(allocator, payload, .{});
     defer allocator.free(serialized);
 
-    var res = try patch(io, allocator, "https://httpbin.org/patch", .{
+    var res = try patch(io, allocator, "https://httpbingo.org/patch", .{
         .body = jsonBody(serialized),
     });
     defer res.deinit();
@@ -270,7 +270,7 @@ test "delete request" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var res = try delete(io, allocator, "https://httpbin.org/delete", .{});
+    var res = try delete(io, allocator, "https://httpbingo.org/delete", .{});
     defer res.deinit();
     try std.testing.expect(res.status == .ok);
 }
@@ -284,7 +284,7 @@ test "form body" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var res = try post(io, allocator, "https://httpbin.org/post", .{
+    var res = try post(io, allocator, "https://httpbingo.org/post", .{
         .body = .{ .form = &.{
             .{ "name", "pacman" },
             .{ "version", "1" },
@@ -306,7 +306,7 @@ test "timeout field exists" {
     const io = threaded.io();
 
     // Test that timeout_ms field exists and doesn't break anything
-    var res = try get(io, allocator, "https://httpbin.org/get", .{
+    var res = try get(io, allocator, "https://httpbingo.org/get", .{
         .timeout_ms = 0, // No timeout
     });
     defer res.deinit();
@@ -324,7 +324,7 @@ test "real timeout functionality" {
 
     // This test will need to be updated when timeout functionality is implemented
     // For now, it just verifies that the request completes successfully
-    var res = try get(io, allocator, "https://httpbin.org/delay/1", .{
+    var res = try get(io, allocator, "https://httpbingo.org/delay/1", .{
         .timeout_ms = 500, // 500ms timeout - should timeout if implemented
     });
     defer res.deinit();
@@ -343,7 +343,7 @@ test "Client.delete()" {
     const io = threaded.io();
 
     var client = try Client.init(io, allocator, .{
-        .base_url = "https://httpbin.org",
+        .base_url = "https://httpbingo.org",
     });
     defer client.deinit();
     var res = try client.delete("/delete", .{});
@@ -360,12 +360,25 @@ test "concurrent requests with io.async" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    // measure time — 2 sequential requests would take ~2x
-    // concurrent should finish in ~1x
+    // A fixed absolute threshold (e.g. "< 1900ms") is unreliable across
+    // environments: per-request overhead (DNS, TCP connect, TLS handshake)
+    // varies a lot by network/sandbox and can itself exceed 1900ms before the
+    // endpoint's own 1s delay is even counted — that overhead is unrelated to
+    // whether the two requests actually ran concurrently. So instead we
+    // measure a real sequential baseline (one request, timed alone) and
+    // assert the concurrent pair finishes well under 2x that baseline —
+    // which is what "these two requests actually overlapped" means,
+    // regardless of the absolute cost of a single request here.
+    const baseline_start = Io.Clock.real.now(io);
+    var r0 = try get(io, allocator, "https://httpbingo.org/delay/1", .{});
+    const baseline_end = Io.Clock.real.now(io);
+    r0.deinit();
+    const baseline_ms = @divTrunc(baseline_start.durationTo(baseline_end).toNanoseconds(), 1000000);
+
     const start = Io.Clock.real.now(io);
 
-    var t1 = io.async(get, .{ io, allocator, "https://httpbin.org/delay/1", FetchOptions{} });
-    var t2 = io.async(get, .{ io, allocator, "https://httpbin.org/delay/1", FetchOptions{} });
+    var t1 = io.async(get, .{ io, allocator, "https://httpbingo.org/delay/1", FetchOptions{} });
+    var t2 = io.async(get, .{ io, allocator, "https://httpbingo.org/delay/1", FetchOptions{} });
 
     var r1 = try t1.await(io);
     var r2 = try t2.await(io);
@@ -374,16 +387,19 @@ test "concurrent requests with io.async" {
     const elapsed_ns = start.durationTo(end).toNanoseconds();
     const elapsed_ms = @divTrunc(elapsed_ns, 1000000);
 
-    // if truly concurrent, both 1s requests finish in ~1s total, not ~2s
-    std.debug.print("elapsed: {d}ms\n", .{elapsed_ms});
+    // if truly concurrent, both 1s requests finish in ~1x a single request,
+    // not ~2x
+    std.debug.print("baseline (1 request): {d}ms, concurrent (2 requests): {d}ms\n", .{ baseline_ms, elapsed_ms });
 
     defer r1.deinit();
     defer r2.deinit();
 
     try std.testing.expect(r1.status == .ok);
     try std.testing.expect(r2.status == .ok);
-    // concurrent: should finish well under 2 seconds (accounting for network variability)
-    try std.testing.expect(elapsed_ms < 1900);
+    // concurrent: should finish well under 2x the sequential baseline
+    // (accounting for network variability) — proves the two requests
+    // actually overlapped instead of running one after the other.
+    try std.testing.expect(elapsed_ms < @divTrunc(baseline_ms * 3, 2));
 }
 
 test "asyncGet with Client" {
@@ -396,7 +412,7 @@ test "asyncGet with Client" {
     const io = threaded.io();
 
     var client = try Client.init(io, allocator, .{
-        .base_url = "https://httpbin.org",
+        .base_url = "https://httpbingo.org",
     });
     defer client.deinit();
 
@@ -415,7 +431,7 @@ test "asyncPost with Client" {
     const io = threaded.io();
 
     var client = try Client.init(io, allocator, .{
-        .base_url = "https://httpbin.org",
+        .base_url = "https://httpbingo.org",
     });
     defer client.deinit();
 
@@ -438,7 +454,7 @@ test "asyncPut with Client" {
     const io = threaded.io();
 
     var client = try Client.init(io, allocator, .{
-        .base_url = "https://httpbin.org",
+        .base_url = "https://httpbingo.org",
     });
     defer client.deinit();
 
@@ -461,7 +477,7 @@ test "asyncPatch with Client" {
     const io = threaded.io();
 
     var client = try Client.init(io, allocator, .{
-        .base_url = "https://httpbin.org",
+        .base_url = "https://httpbingo.org",
     });
     defer client.deinit();
 
@@ -484,7 +500,7 @@ test "asyncDelete with Client" {
     const io = threaded.io();
 
     var client = try Client.init(io, allocator, .{
-        .base_url = "https://httpbin.org",
+        .base_url = "https://httpbingo.org",
     });
     defer client.deinit();
 
@@ -503,7 +519,7 @@ test "concurrent async requests with Client methods" {
     const io = threaded.io();
 
     var client = try Client.init(io, allocator, .{
-        .base_url = "https://httpbin.org",
+        .base_url = "https://httpbingo.org",
     });
     defer client.deinit();
 
@@ -541,6 +557,60 @@ fn testEnv(key: []const u8) ?[]const u8 {
     return null;
 }
 
+/// Accepts exactly one connection, replies to whatever it received with a
+/// bare "200 Connection Established" (no headers), then hangs up — playing
+/// a misbehaving HTTP(S) proxy that confirms the CONNECT tunnel and then
+/// closes the socket before any TLS bytes can be exchanged on top of it.
+fn brokenProxyAcceptAndHangUp(io: Io, server: *Io.net.Server) !void {
+    var stream = try server.accept(io);
+    defer stream.close(io);
+
+    var write_buf: [64]u8 = undefined;
+    var w = stream.writer(io, &write_buf);
+    try w.interface.writeAll("HTTP/1.1 200 Connection Established\r\n\r\n");
+    try w.interface.flush();
+    // Returning here closes `stream` (via the `defer` above) immediately —
+    // before the caller can perform a TLS handshake over the "tunnel".
+}
+
+test "HTTP(S) proxy: tunnel closed before TLS handshake does not crash (UAF regression)" {
+    // Regression test for vendor/zig-lib-patched/PATCH_NOTES.md's Change 3.
+    // std.http.Client.connectProxied() used to write into an already-freed
+    // Connection when a CONNECT tunnel succeeded but the TLS handshake
+    // performed afterward (once the tunneled .plain Connection is destroyed
+    // and rebuilt as .tls) then failed — exactly what happens when a proxy
+    // closes the connection right after "200 Connection Established". Under
+    // DebugAllocator, a regression here surfaces as a double-free/invalid-free
+    // panic, not merely a returned error — so the real assertion this test
+    // makes is "doesn't crash", not the specific error value.
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var threaded: std.Io.Threaded = .init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var addr = try Io.net.IpAddress.parseIp4("127.0.0.1", 0);
+    var server = try addr.listen(io, .{});
+    defer server.deinit(io);
+    const port = server.socket.address.getPort();
+
+    var fake_proxy = io.async(brokenProxyAcceptAndHangUp, .{ io, &server });
+
+    var proxy_url_buf: [48]u8 = undefined;
+    const proxy_url = try std.fmt.bufPrint(&proxy_url_buf, "http://127.0.0.1:{d}", .{port});
+
+    const result = get(io, allocator, "https://example.com/", .{ .proxy_url = proxy_url });
+    try fake_proxy.await(io);
+
+    if (result) |res| {
+        var r = res;
+        r.deinit();
+        return error.TestUnexpectedResult; // the tunnel was never usable — this should have failed
+    } else |_| {} // any error is fine here; a crash is the only real failure mode
+}
+
 test "GET through an explicit HTTP(S) proxy" {
     // Only runs if PACMAN_TEST_HTTP_PROXY is set, e.g.:
     //   PACMAN_TEST_HTTP_PROXY=http://127.0.0.1:8899 zig test src/root.zig
@@ -557,7 +627,7 @@ test "GET through an explicit HTTP(S) proxy" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var res = try get(io, allocator, "https://httpbin.org/get", .{ .proxy_url = url });
+    var res = try get(io, allocator, "https://httpbingo.org/get", .{ .proxy_url = url });
     defer res.deinit();
 
     try std.testing.expect(res.status == .ok);
@@ -580,7 +650,7 @@ test "GET HTTPS through an explicit SOCKS5(h) proxy" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var res = try get(io, allocator, "https://httpbin.org/get", .{ .proxy_url = url });
+    var res = try get(io, allocator, "https://httpbingo.org/get", .{ .proxy_url = url });
     defer res.deinit();
 
     try std.testing.expect(res.status == .ok);

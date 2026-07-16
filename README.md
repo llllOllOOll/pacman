@@ -536,11 +536,27 @@ pacman was created by the [Spider](https://www.spiderme.org/) team to provide a 
 ## Vendored Zig Stdlib Patch
 
 `vendor/zig-lib-patched/` is a local copy of the Zig standard library (specifically
-`lib/std/http/Client.zig`) with two patches applied. It exists because pacman needs
-behavior the official stdlib doesn't have — or hasn't fixed — yet, in the exact Zig
-version this project targets. It's wired in only for `zig build test` (via `zig_lib_dir`
-in `build.zig`); it does not affect how projects consuming `pacman` as a dependency
-build.
+`lib/std/http/Client.zig`) with three patches applied, documented in full in
+`vendor/zig-lib-patched/PATCH_NOTES.md`. It exists because pacman needs behavior the
+official stdlib doesn't have — or hasn't fixed — yet, in the exact Zig version this
+project targets.
+
+> **⚠️ Not currently wired into the build.** `build.zig`'s `test` step no longer
+> overrides `zig_lib_dir` to point at this vendor copy — `zig build test` (and any
+> other build step) uses whatever stdlib ships with your own `zig` toolchain. This
+> vendor directory is now a **reference/patch source**, not something the build
+> applies for you.
+>
+> `src/proxy.zig` calls `adoptTunneledStream()` (Change 2 below) directly, which only
+> exists on a stdlib that has these patches. **If your `zig` toolchain's own stdlib
+> doesn't already have them, pacman will fail to compile** (missing
+> `adoptTunneledStream`) — or, if you stub that part out, will silently reintroduce
+> the bugs Changes 1 and 3 fix (cleartext HTTPS-through-proxy requests, and a
+> use-after-free on a failed TLS handshake over a proxy tunnel). Until Zig core fixes
+> [ziglang/zig#19878](https://github.com/ziglang/zig/issues/19878) and ships some way
+> to adopt an externally-tunneled stream, if you want to build/test pacman yourself
+> you need to apply this patch to your own local stdlib — see "Applying the patch
+> locally" below.
 
 ### Change 1 — HTTPS-through-HTTP-proxy bugfix
 
@@ -565,6 +581,37 @@ Because it's an addition rather than a correction, this change will likely still
 needed even after Change 1 is fixed officially, unless it's separately proposed and
 accepted upstream as public API.
 
+### Change 3 — `connectProxied()` use-after-free fix on TLS-handshake failure
+
+A use-after-free introduced by Change 1's own TLS-upgrade code: once the `CONNECT`
+tunnel is confirmed, the tunneled `.plain` `Connection` is destroyed and rebuilt as
+`.tls` so a real TLS handshake can happen over it. If that handshake then fails (e.g.
+the proxy hangs up right after confirming the tunnel), a stale `errdefer` used to
+write into the now-freed `Connection` — reproduced locally, segfaults. Fixed by
+guarding the `errdefer` with a `connection_freed` flag and explicitly closing the raw
+stream on the TLS-create failure path. Covered by a regression test in `src/root.zig`
+(`"HTTP(S) proxy: tunnel closed before TLS handshake does not crash (UAF regression)"`)
+that spins up a local fake-proxy TCP listener — no real proxy or network access
+needed to reproduce or verify this one.
+
+### Applying the patch locally
+
+To build or test pacman against a stock/official Zig toolchain (one that doesn't
+already carry these three changes):
+
+1. Find your `zig` toolchain's stdlib directory — next to the `zig` binary itself, or
+   check `zig env` for `std_dir`.
+2. Copy `vendor/zig-lib-patched/std/http/Client.zig` over that toolchain's
+   `lib/std/http/Client.zig` (if your Zig version differs from the one this vendor
+   copy was cut against, diff the two `Client.zig` files first — this is not a
+   version-pinned patch file, it's a full copy of an already-patched version).
+3. Run `zig build test` — it should now compile and pass against your toolchain's
+   (now-patched) stdlib.
+
+If you'd rather not touch an existing install, build your own Zig toolchain from
+source with these changes applied directly to `lib/std/http/Client.zig`, and point
+`zig` at that build instead.
+
 ### Disclosure
 
 This patch was developed with AI assistance and reviewed personally before
@@ -574,10 +621,11 @@ parsing code before any real network execution.
 
 ### Intent
 
-The long-term goal is to upstream Change 1 as a PR to `ziglang/zig` (referencing
-issue #19878) and drop it from this vendor copy once/if it's accepted. Until then,
-vendoring solves the practical problem now, without depending on the Zig project's
-timeline for reviewing external contributions.
+The long-term goal is to upstream Changes 1 and 3 together as one PR to
+`ziglang/zig` (referencing issue #19878 — Change 3 only exists because of Change 1's
+own code, so they should land together) and drop both from this vendor copy once/if
+accepted. Until then, vendoring solves the practical problem now, without depending
+on the Zig project's timeline for reviewing external contributions.
 
 ---
 

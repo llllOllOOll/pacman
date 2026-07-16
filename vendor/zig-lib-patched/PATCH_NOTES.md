@@ -7,7 +7,7 @@ and the loose files at the root of `lib/` — **not** the whole `lib/`, which
 is 227MB; this subset is ~26MB and was validated as sufficient to compile and
 test this project natively against the system's libc).
 
-One file changed inside it: `std/http/Client.zig` — two changes, described
+One file changed inside it: `std/http/Client.zig` — three changes, described
 separately below since they have different motivations and different
 upstream fates.
 
@@ -113,6 +113,47 @@ unless `adoptTunneledStream` (or an equivalent) is separately proposed and
 accepted upstream. Don't assume removing `vendor/zig-lib-patched/` is safe
 just because Change 1's bug got fixed officially; check both changes
 independently.
+
+## Change 3 — `connectProxied()` use-after-free fix on TLS-handshake failure
+
+### Why
+
+Bug introduced by Change 1's TLS-upgrade code, found via local reproduction
+(a proxy that closes the connection before the TLS handshake over the tunnel
+completes) — segfault.
+
+Sequence: after the `CONNECT` tunnel is confirmed, the `errdefer` registered
+right after `client.connectTcpOptions(...)` closes over `connection`. In the
+`protocol == .tls` branch, `plain.destroy()` frees that same `connection`
+(the `Plain` wrapper containing it) so `Connection.Tls.create()` can take
+over the raw stream. If `Connection.Tls.create()` then fails (e.g. the
+tunnel closes mid-handshake), the function returns an error, which unwinds
+through the still-active `errdefer` — and that `errdefer` writes to
+`connection.closing` and passes `connection` to
+`client.connection_pool.release()`, both of which touch already-freed
+memory.
+
+### The patch
+
+- Added `var connection_freed = false;` next to the `errdefer`, and guarded
+  the `errdefer`'s body with `if (!connection_freed)`.
+- Set `connection_freed = true;` immediately after `plain.destroy()`.
+- In `Connection.Tls.create()`'s `catch`, call `stream.close(io)` before
+  returning any error — once `Plain` is destroyed, nothing else owns the raw
+  stream, so a failed TLS handshake must close it explicitly or it leaks.
+
+### Upstream status
+
+- Not filed as a separate upstream issue — this bug only exists in this
+  vendored tree, since it's a consequence of Change 1 (which itself is not
+  yet upstream). If/when Change 1 is proposed upstream, fold this fix into
+  the same PR.
+
+### When to remove this specific change
+
+Goes away together with Change 1 — see that section's removal notes. There
+is no independent condition under which this fix would be needed but Change
+1 would not.
 
 ## Combined removal checklist
 

@@ -102,7 +102,10 @@ fn hasContentType(headers: []const http.Header) bool {
 pub fn request(io: Io, allocator: std.mem.Allocator, url: []const u8, opts: FetchOptions, existing_client: ?*http.Client) !Response {
     var arena = try allocator.create(std.heap.ArenaAllocator);
     arena.* = .init(allocator);
-    errdefer arena.deinit();
+    errdefer {
+        arena.deinit();
+        allocator.destroy(arena);
+    }
 
     const aa = arena.allocator();
 

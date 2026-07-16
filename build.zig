@@ -15,11 +15,11 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Tests use a vendored, patched copy of the Zig stdlib, only for this
-    // test step — it does not affect the "pacman" module registered above,
-    // nor how consumer projects (spider, orbitx) build. See
-    // vendor/zig-lib-patched/PATCH_NOTES.md for the reason and how to remove
-    // this once the fix (ziglang/zig#19878) ships in an official release.
+    // // Tests use a vendored, patched copy of the Zig stdlib, only for this
+    // // test step — it does not affect the "pacman" module registered above,
+    // // nor how consumer projects (spider, orbitx) build. See
+    // // vendor/zig-lib-patched/PATCH_NOTES.md for the reason and how to remove
+    // // this once the fix (ziglang/zig#19878) ships in an official release.
     const test_mod = b.createModule(.{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
@@ -29,7 +29,7 @@ pub fn build(b: *std.Build) void {
 
     const tests = b.addTest(.{
         .root_module = test_mod,
-        .zig_lib_dir = b.path("vendor/zig-lib-patched"),
+        // .zig_lib_dir = b.path("vendor/zig-lib-patched"),
     });
 
     const run_tests = b.addRunArtifact(tests);

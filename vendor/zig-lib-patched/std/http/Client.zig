@@ -1543,9 +1543,12 @@ pub fn connectProxied(
             .proxied_host = proxied_host,
             .proxied_port = proxied_port,
         });
+        var connection_freed = false;
         errdefer {
-            connection.closing = true;
-            client.connection_pool.release(connection, io);
+            if (!connection_freed) {
+                connection.closing = true;
+                client.connection_pool.release(connection, io);
+            }
         }
 
         var req = client.request(.CONNECT, .{
@@ -1589,12 +1592,16 @@ pub fn connectProxied(
             client.connection_pool.used.remove(&connection.pool_node);
             client.connection_pool.mutex.unlock(io);
             plain.destroy(); // frees the Plain wrapper only; `stream` stays open
+            connection_freed = true;
 
-            const tls = Connection.Tls.create(client, proxied_host, proxied_port, stream) catch |err| switch (err) {
-                error.OutOfMemory => |e| return e,
-                error.Unexpected => |e| return e,
-                error.Canceled => |e| return e,
-                else => return error.TlsInitializationFailed,
+            const tls = Connection.Tls.create(client, proxied_host, proxied_port, stream) catch |err| {
+                stream.close(io);
+                switch (err) {
+                    error.OutOfMemory => |e| return e,
+                    error.Unexpected => |e| return e,
+                    error.Canceled => |e| return e,
+                    else => return error.TlsInitializationFailed,
+                }
             };
             try client.connection_pool.addUsed(io, &tls.connection);
             return &tls.connection;
